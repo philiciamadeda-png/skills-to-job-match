@@ -1,0 +1,35 @@
+# Secrets
+.env
+.env.*.local
+
+# Python
+*.pyc
+*.pyo
+__pycache__/
+*.egg-info/
+
+# Virtual environment
+.venv/
+venv/
+
+# Django
+db.sqlite3
+staticfiles/
+media/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# Logs & coverage
+*.log
+.coverage
+htmlcov/
+
+# OS
+.DS_Store
+
+# Editor
+*.swp
+*.swo
+.idea/
