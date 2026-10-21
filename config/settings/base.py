@@ -77,3 +77,35 @@ MEDIA_URL = 'media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# Celery
+CELERY_BROKER_URL = env('REDIS_URL', default='redis://localhost:6379/0')
+CELERY_RESULT_BACKEND = CELERY_BROKER_URL
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TIMEZONE = TIME_ZONE
+CELERY_BEAT_SCHEDULE = {
+    'ingest-remotive-daily': {
+        'task': 'apps.ingestion.tasks.task_ingest_jobs',
+        'schedule': 7200,  # every 2 hours during dev; change to crontab(hour=2) in production
+        'args': ('remotive',),
+    },
+    'ingest-arbeitnow-daily': {
+        'task': 'apps.ingestion.tasks.task_ingest_jobs',
+        'schedule': 7200,
+        'args': ('arbeitnow',),
+        'kwargs': {'max_pages': 3},
+    },
+    'transform-jobs-daily': {
+        'task': 'apps.ingestion.tasks.task_transform_jobs',
+        'schedule': 7200 + 1800,  # 30 min after ingest window
+    },
+}
+
+# Cache — Redis, used for distributed locks
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+        'LOCATION': env('REDIS_URL', default='redis://localhost:6379/1'),
+    }
+}

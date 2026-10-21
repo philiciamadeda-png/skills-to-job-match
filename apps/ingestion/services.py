@@ -28,5 +28,5 @@ def ingest_from_source(source_name: str, jobs: list[dict]) -> dict:
                 fetched_at=datetime.now(tz=timezone.utc),
             ))
 
-    RawJobPayload.objects.bulk_create(to_create)
-    return {'total': len(jobs), 'saved': len(to_create), 'skipped': len(jobs) - len(to_create)}
+    created = RawJobPayload.objects.bulk_create(to_create, ignore_conflicts=True)
+    return {'total': len(jobs), 'saved': len(created), 'skipped': len(jobs) - len(created)}

@@ -9,6 +9,10 @@ class FetchError(Exception):
     """Raised when an HTTP request fails after all retries."""
 
 
+class RateLimitError(FetchError):
+    """Raised on HTTP 429 — needs longer backoff than generic fetch errors."""
+
+
 class BaseJobSource(ABC):
     def __init__(self, api_key: str | None = None) -> None:
         self._session = self._build_session(api_key)
@@ -38,14 +42,16 @@ class BaseJobSource(ABC):
     # Shared logic
     # ------------------------------------------------------------------
 
-    def fetch_all(self) -> list[dict]:
-        """Paginate through all results and return every raw listing."""
+    def fetch_all(self, max_pages: int | None = None) -> list[dict]:
+        """Paginate through results and return every raw listing."""
         listings: list[dict] = []
         page = 1
         while True:
             raw = self.fetch_page(page)
             listings.extend(self.parse_listings(raw))
             if not self.has_next_page(raw):
+                break
+            if max_pages is not None and page >= max_pages:
                 break
             page += 1
         return listings
@@ -57,6 +63,8 @@ class BaseJobSource(ABC):
             response.raise_for_status()
             return response.json()
         except requests.HTTPError as exc:
+            if exc.response.status_code == 429:
+                raise RateLimitError(f"{self.source_name}: rate limited by {url}") from exc
             raise FetchError(f"{self.source_name}: HTTP {exc.response.status_code} for {url}") from exc
         except requests.RequestException as exc:
             raise FetchError(f"{self.source_name}: request failed — {exc}") from exc
@@ -71,7 +79,7 @@ class BaseJobSource(ABC):
         retry = Retry(
             total=3,
             backoff_factor=1,
-            status_forcelist=[429, 500, 502, 503],
+            status_forcelist=[500, 502, 503],
             allowed_methods=["GET"],
         )
         session.mount("https://", HTTPAdapter(max_retries=retry))
