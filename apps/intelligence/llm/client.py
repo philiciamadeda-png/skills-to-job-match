@@ -15,15 +15,16 @@ from django.conf import settings
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Cost table — update when model pricing changes
+# Cost table — Ollama is free/local so cost is 0
 # ---------------------------------------------------------------------------
 _COST_PER_1K = {
-    "gpt-4o-mini": {"input": 0.000150, "output": 0.000600},
-    "gpt-4o":      {"input": 0.002500, "output": 0.010000},
+    "gpt-4o-mini":  {"input": 0.000150, "output": 0.000600},
+    "gpt-4o":       {"input": 0.002500, "output": 0.010000},
+    "llama3.2":     {"input": 0.0, "output": 0.0},
 }
 
-_DEFAULT_MODEL = "gpt-4o-mini"
-_DEFAULT_TIMEOUT = 30          # seconds
+_DEFAULT_MODEL = "llama3.2"
+_DEFAULT_TIMEOUT = 120         # Ollama local inference can be slower
 _MAX_RETRIES = 3
 _BACKOFF_BASE = 2              # seconds; delay = base ** attempt
 
@@ -127,8 +128,13 @@ class LLMClient:
         # Import is local so the SDK never leaks into other modules
         import openai  # noqa: PLC0415
 
+        # Use Ollama's OpenAI-compatible local endpoint if no API key is set
+        api_key = getattr(settings, "OPENAI_API_KEY", "") or "ollama"
+        base_url = getattr(settings, "LLM_BASE_URL", "http://localhost:11434/v1")
+
         client = openai.OpenAI(
-            api_key=settings.OPENAI_API_KEY,
+            api_key=api_key,
+            base_url=base_url,
             timeout=timeout,
         )
 

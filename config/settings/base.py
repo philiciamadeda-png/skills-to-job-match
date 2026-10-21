@@ -80,6 +80,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # LLM
 OPENAI_API_KEY = env("OPENAI_API_KEY", default="")
+LLM_BASE_URL = env("LLM_BASE_URL", default="http://localhost:11434/v1")
 
 # Celery
 CELERY_BROKER_URL = env('REDIS_URL', default='redis://localhost:6379/0')
