@@ -224,39 +224,33 @@ docker-compose.yml
 - Hash computed from stable content fields only (`id`, `title`, `company_name`, `description`, `job_type`, `salary`, `candidate_required_location`)
 - Verified: first run saves, second run skips all duplicates
 
-### Step 19 — Scheduling, retries, and failure handling
-- `RateLimitError(FetchError)` added to `base.py` — raised specifically on HTTP 429, separate from generic `FetchError`; 429 removed from session-level `Retry` so task-level backoff controls it
-- `CELERY_BEAT_SCHEDULE` in `base.py` — ingest both sources every 2h (dev), transform 30min later; change to `crontab(hour=2)` for production
-- `CACHES` configured in `base.py` using Redis (db 1) for Django cache framework — used for distributed locks
-- `task_ingest_jobs` — `autoretry_for=(FetchError,)` max 3 retries, 60s backoff; `RateLimitError` overrides to 300s countdown; Redis lock prevents overlap; `IngestionRun` records every run with counts and duration
-- `task_transform_jobs` — Redis lock prevents overlap; `IngestionRun` records every run; retries on unexpected exceptions
-- Lock TTL = 1 hour; atomic `cache.add()` prevents race conditions; released in `finally` block
+### Step 11 — Tests
+- `pytest`, `pytest-django`, `factory-boy` installed
+- `conftest.py` with `CompanyFactory`, `LocationFactory`, `JobFactory`, `RawJobPayloadFactory`
+- 4 tests in `apps/ingestion/tests/test_ingestion.py` — all passing
+- Covers: model creation, content hash stability, mocked HTTP parsing, dedup on double ingest
 
-### Step 18 — Celery + Redis
-- Redis service added to `docker-compose.yml` (`redis:7-alpine`, port 6379)
-- `config/celery.py` — Celery app with `autodiscover_tasks`, defaults to `config.settings.local`
-- `config/__init__.py` — exports `celery_app` so Django loads it on startup
-- `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`, serializer settings added to `base.py`; broker URL read from `REDIS_URL` env var (default `redis://localhost:6379/0`)
-- `apps/ingestion/tasks.py` — `task_ingest_jobs(source, limit, max_pages)` and `task_transform_jobs(batch_size)` as thin wrappers over existing service functions
-- `celery` and `redis` packages installed
+### Step 12 — IngestionRun model
+- `IngestionRun` model in `apps/ingestion/models.py` to log every pipeline run
+- `Stage` choices: `ingest`, `transform`; `Status` choices: `running`, `success`, `failed` — both use `TextChoices` for human-readable DB values
+- Tracks `started_at`, `finished_at`, counts (`fetched`, `created`, `skipped`, `failed`), and `error` text
+- `duration` is a computed `@property` (no stored field) derived from `finished_at - started_at`
+- Composite index on `(status, -started_at)` for efficient "last N failed runs" queries
+- `ingestion_run(stage, source)` context manager handles run lifecycle: creates the record, sets `success`/`failed` status, captures exception message, saves on exit
+- Migration `0002_ingestion_run` created and applied
 
-### Step 17 — Cross-source deduplication
-- `normalised_title` field added to `Job` — populated by transform service and backfilled on existing rows
-- `canonical` self-FK on `Job` — `null` = canonical record, non-null = duplicate pointing at its canonical; preserves both source references, fully reversible
-- `deduplicate_jobs(dry_run)` in `apps/intelligence/services.py` — matches on `(normalised_title, company)` across different sources; earliest-created job wins
-- `normalize_title()` added to `apps/intelligence/utils.py`
-- `dry_run=True` mode counts matches without writing — use this to measure catch rate before committing
-- Migration `0004_job_dedup_fields` applied
-- 0 cross-source duplicates in current dataset (Remotive and Arbeitnow have non-overlapping job pools)
+### Step 13 — ArbeitnowSource and pagination fix
+- `fetch_all(max_pages)` parameter added to `BaseJobSource` — minimal change to support paginated sources without redesigning the base class
+- `ArbeitnowSource` in `apps/ingestion/sources/arbeitnow.py`
+- Fetches from `https://www.arbeitnow.com/api/job-board-api` — no auth required, 300 jobs/page
+- Pagination driven by `links.next` in the response (`None` = last page)
+- `max_pages` constructor arg caps pages fetched during development
+- Verified: 2-page cap returns 600 listings with correct field shape
 
-### Step 16 — Skill vocabulary layer
-- `SkillAlias` model added to `apps/intelligence/models.py` — maps many raw strings to one canonical `Skill`
-- `is_auto_created` flag on `Skill` — skills created by the resolver at runtime are flagged for human review
-- `normalize_skill(raw)` in `apps/intelligence/utils.py` — strips non-alphanumeric, lowercases; `"PostgreSQL"` and `"Postgres"` both produce `"postgresql"`
-- `resolve_skill(raw)` in `apps/intelligence/services.py` — lookup order: alias table → canonical key → auto-create; idempotent
-- `apps/intelligence/fixtures/skills_seed.py` — 29 canonical skills, 73 aliases across databases, languages, frameworks, cloud, and data tools
-- `python manage.py seed_skills` loads seed data idempotently
-- Migration `0003_skill_alias` applied
+### Step 14 — Normalisation utilities
+- `apps/intelligence/utils.py` — two pure functions, no DB access, fully idempotent
+- `normalize_company(name)` — collapses whitespace, strips legal suffixes (Inc, LLC, Ltd, GmbH, Pty Ltd, BV, SA, AB), lowercases; `"Google LLC"` and `"Google, Inc."` both produce `"google"`
+- `normalize_location(text)` — returns `{is_remote, country, city, raw}`; detects remote keywords, maps country hints to ISO 3166-1 alpha-2, extracts city from `"City, Country"` pattern; unparseable input preserved in `raw`
 
 ### Step 15 — Transform service
 - `apps/intelligence/services.py` — `transform_raw_payloads(run, batch_size)` reads unprocessed `RawJobPayload` rows in batches and writes `Job`, `Company`, `Location`
@@ -267,33 +261,39 @@ docker-compose.yml
 - Accepts optional `IngestionRun` instance and updates `created`, `skipped`, `failed` counts
 - Fixed `Job.contract_type` max_length 50→100 and `Job.external_url` max_length 200→500 to handle real Arbeitnow data; migration `0002_fix_field_lengths` applied
 
-### Step 14 — Normalisation utilities
-- `apps/intelligence/utils.py` — two pure functions, no DB access, fully idempotent
-- `normalize_company(name)` — collapses whitespace, strips legal suffixes (Inc, LLC, Ltd, GmbH, Pty Ltd, BV, SA, AB), lowercases; `"Google LLC"` and `"Google, Inc."` both produce `"google"`
-- `normalize_location(text)` — returns `{is_remote, country, city, raw}`; detects remote keywords, maps country hints to ISO 3166-1 alpha-2, extracts city from `"City, Country"` pattern; unparseable input preserved in `raw`
+### Step 16 — Skill vocabulary layer
+- `SkillAlias` model added to `apps/intelligence/models.py` — maps many raw strings to one canonical `Skill`
+- `is_auto_created` flag on `Skill` — skills created by the resolver at runtime are flagged for human review
+- `normalize_skill(raw)` in `apps/intelligence/utils.py` — strips non-alphanumeric, lowercases; `"PostgreSQL"` and `"Postgres"` both produce `"postgresql"`
+- `resolve_skill(raw)` in `apps/intelligence/services.py` — lookup order: alias table → canonical key → auto-create; idempotent
+- `apps/intelligence/fixtures/skills_seed.py` — 29 canonical skills, 73 aliases across databases, languages, frameworks, cloud, and data tools
+- `python manage.py seed_skills` loads seed data idempotently
+- Migration `0003_skill_alias` applied
 
-### Step 13 — ArbeitnowSource and pagination fix
-- `fetch_all(max_pages)` parameter added to `BaseJobSource` — minimal change to support paginated sources without redesigning the base class
-- `ArbeitnowSource` in `apps/ingestion/sources/arbeitnow.py`
-- Fetches from `https://www.arbeitnow.com/api/job-board-api` — no auth required, 300 jobs/page
-- Pagination driven by `links.next` in the response (`None` = last page)
-- `max_pages` constructor arg caps pages fetched during development
-- Verified: 2-page cap returns 600 listings with correct field shape
+### Step 17 — Cross-source deduplication
+- `normalised_title` field added to `Job` — populated by transform service and backfilled on existing rows
+- `canonical` self-FK on `Job` — `null` = canonical record, non-null = duplicate pointing at its canonical; preserves both source references, fully reversible
+- `deduplicate_jobs(dry_run)` in `apps/intelligence/services.py` — matches on `(normalised_title, company)` across different sources; earliest-created job wins
+- `normalize_title()` added to `apps/intelligence/utils.py`
+- `dry_run=True` mode counts matches without writing — use this to measure catch rate before committing
+- Migration `0004_job_dedup_fields` applied
+- 0 cross-source duplicates in current dataset (Remotive and Arbeitnow have non-overlapping job pools)
 
+### Step 18 — Celery + Redis
+- Redis service added to `docker-compose.yml` (`redis:7-alpine`, port 6379)
+- `config/celery.py` — Celery app with `autodiscover_tasks`, defaults to `config.settings.local`
+- `config/__init__.py` — exports `celery_app` so Django loads it on startup
+- `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`, serializer settings added to `base.py`; broker URL read from `REDIS_URL` env var (default `redis://localhost:6379/0`)
+- `apps/ingestion/tasks.py` — `task_ingest_jobs(source, limit, max_pages)` and `task_transform_jobs(batch_size)` as thin wrappers over existing service functions
+- `celery` and `redis` packages installed
 
-- `IngestionRun` model in `apps/ingestion/models.py` to log every pipeline run
-- `Stage` choices: `ingest`, `transform`; `Status` choices: `running`, `success`, `failed` — both use `TextChoices` for human-readable DB values
-- Tracks `started_at`, `finished_at`, counts (`fetched`, `created`, `skipped`, `failed`), and `error` text
-- `duration` is a computed `@property` (no stored field) derived from `finished_at - started_at`
-- Composite index on `(status, -started_at)` for efficient "last N failed runs" queries
-- `ingestion_run(stage, source)` context manager handles run lifecycle: creates the record, sets `success`/`failed` status, captures exception message, saves on exit
-- Migration `0002_ingestion_run` created and applied
-
-### Step 11 — Tests
-- `pytest`, `pytest-django`, `factory-boy` installed
-- `conftest.py` with `CompanyFactory`, `LocationFactory`, `JobFactory`, `RawJobPayloadFactory`
-- 4 tests in `apps/ingestion/tests/test_ingestion.py` — all passing
-- Covers: model creation, content hash stability, mocked HTTP parsing, dedup on double ingest
+### Step 19 — Scheduling, retries, and failure handling
+- `RateLimitError(FetchError)` added to `base.py` — raised specifically on HTTP 429, separate from generic `FetchError`; 429 removed from session-level `Retry` so task-level backoff controls it
+- `CELERY_BEAT_SCHEDULE` in `base.py` — ingest both sources every 2h (dev), transform 30min later; change to `crontab(hour=2)` for production
+- `CACHES` configured in `base.py` using Redis (db 1) for Django cache framework — used for distributed locks
+- `task_ingest_jobs` — `autoretry_for=(FetchError,)` max 3 retries, 60s backoff; `RateLimitError` overrides to 300s countdown; Redis lock prevents overlap; `IngestionRun` records every run with counts and duration
+- `task_transform_jobs` — Redis lock prevents overlap; `IngestionRun` records every run; retries on unexpected exceptions
+- Lock TTL = 1 hour; atomic `cache.add()` prevents race conditions; released in `finally` block
 
 ### Step 20 — Transform service tests
 - 4 tests in `apps/intelligence/tests/test_transform.py` — all passing (8 total across suite)
