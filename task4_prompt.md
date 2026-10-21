@@ -1,3 +1,4 @@
+
 I need a transform service for my Django job pipeline that reads unprocessed `RawJobPayload` rows and writes structured `Job`, `Company`, and `Location` records.
 
 **Models involved:**
