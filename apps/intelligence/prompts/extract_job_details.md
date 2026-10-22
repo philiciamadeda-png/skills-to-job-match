@@ -26,6 +26,7 @@ Return a single JSON object matching this schema exactly. Do not return anything
 **Skills**
 - `required_skills`: only skills the description explicitly requires or says are mandatory.
 - `nice_to_have_skills`: skills described as preferred, advantageous, or a plus.
+- Skills must be atomic names: a programming language, framework, tool, platform, or certification (e.g. "Python", "React", "PostgreSQL", "AWS", "SAP BTP"). Do not include soft skills, job responsibilities, or descriptive phrases.
 - If a skill is listed as an example of an acceptable stack (e.g. "languages such as Python, Java, or Go"), do not include all of them — include only those that appear as actual requirements elsewhere in the description.
 - If the description mentions a tool or platform not in common software vocabulary (e.g. DATEV, Cortex XDR, SAP BTP), include it as-is in the skill list.
 - If no skills are mentioned at all, return empty lists. Do not invent skills.
@@ -47,12 +48,13 @@ Return a single JSON object matching this schema exactly. Do not return anything
 
 **Contract type**
 - `full_time`: permanent or full-time employment.
-- `part_time`: part-time employment, including student/Werkstudent roles.
+- `part_time`: part-time employment, including student/Werkstudent roles. "Werkstudent" maps to `part_time`.
 - `contractor`: fixed-term contract, independent contractor, 12-month contract, etc.
 - `freelance`: explicitly freelance or self-employed.
 - If not mentioned, return `not_stated`.
 
-**When the answer is not in the description**
+**Language**
+- The job description may be in any language. Always return the JSON with English enum values exactly as specified above.
 - Always return `"not_stated"` for any field the description does not address.
 - Never guess, infer, or fill in a plausible value. A wrong confident answer is worse than `"not_stated"`.
 
