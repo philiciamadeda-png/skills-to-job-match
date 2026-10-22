@@ -1,4 +1,6 @@
+from contextlib import contextmanager
 from django.db import models
+from django.utils import timezone
 from apps.core.models import TimestampedModel
 
 
@@ -52,6 +54,11 @@ class JobSkill(TimestampedModel):
 
 
 class Job(TimestampedModel):
+    class ExtractionStatus(models.TextChoices):
+        PENDING = 'pending', 'Pending'
+        SUCCESS = 'success', 'Success'
+        FAILED = 'failed', 'Failed'
+
     title = models.CharField(max_length=255)
     normalised_title = models.CharField(max_length=255, blank=True, db_index=True)
     description = models.TextField(blank=True)
@@ -69,6 +76,13 @@ class Job(TimestampedModel):
     contract_type = models.CharField(max_length=100, blank=True)
     content_hash = models.CharField(max_length=64, db_index=True)
     embedding = models.JSONField(null=True, blank=True)  # placeholder for pgvector
+    extraction_status = models.CharField(
+        max_length=20,
+        choices=ExtractionStatus.choices,
+        default=ExtractionStatus.PENDING,
+        db_index=True,
+    )
+    extraction_error = models.TextField(blank=True)
     canonical = models.ForeignKey(
         'self', null=True, blank=True, on_delete=models.SET_NULL,
         related_name='duplicates',
@@ -81,3 +95,52 @@ class Job(TimestampedModel):
             models.Index(fields=['source', 'source_id']),
             models.Index(fields=['normalised_title', 'company']),
         ]
+
+
+class ExtractionRun(models.Model):
+    class Status(models.TextChoices):
+        RUNNING = 'running', 'Running'
+        SUCCESS = 'success', 'Success'
+        FAILED = 'failed', 'Failed'
+
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.RUNNING)
+    started_at = models.DateTimeField(default=timezone.now)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    processed = models.PositiveIntegerField(default=0)
+    succeeded = models.PositiveIntegerField(default=0)
+    failed = models.PositiveIntegerField(default=0)
+    retried = models.PositiveIntegerField(default=0)
+    tokens_in = models.PositiveIntegerField(default=0)
+    tokens_out = models.PositiveIntegerField(default=0)
+    cost_usd = models.DecimalField(max_digits=10, decimal_places=6, default=0)
+    error = models.TextField(blank=True)
+
+    @property
+    def duration(self):
+        if self.finished_at and self.started_at:
+            return self.finished_at - self.started_at
+        return None
+
+    class Meta:
+        indexes = [models.Index(fields=['status', '-started_at'])]
+
+    def __str__(self):
+        return f"ExtractionRun [{self.status}] {self.started_at:%Y-%m-%d %H:%M}"
+
+
+@contextmanager
+def extraction_run():
+    run = ExtractionRun.objects.create()
+    try:
+        yield run
+        run.status = ExtractionRun.Status.SUCCESS
+    except Exception as exc:
+        run.status = ExtractionRun.Status.FAILED
+        run.error = str(exc)
+        raise
+    finally:
+        run.finished_at = timezone.now()
+        run.save(update_fields=[
+            'status', 'finished_at', 'processed', 'succeeded',
+            'failed', 'retried', 'tokens_in', 'tokens_out', 'cost_usd', 'error',
+        ])
