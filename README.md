@@ -239,6 +239,8 @@ Results are written to `apps/intelligence/eval/results/<timestamp>_<prompt_versi
 
 Headline metric: **skill recall** (missing a required skill is more damaging than a false positive for job matching). Report all metrics; sort prompt versions by recall.
 
+Full iteration log — hypotheses, failure analysis, and what to try next — in [`docs/prompt-iteration.md`](docs/prompt-iteration.md).
+
 ### Prompt versions
 
 | Version | skill_recall | false_positives | seniority_acc | contract_acc | remote_acc |
