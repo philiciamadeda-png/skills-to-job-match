@@ -5,12 +5,19 @@ The OpenAI SDK is imported only here. Nothing else in the codebase touches it.
 """
 from __future__ import annotations
 
+import json
 import logging
+import re
 import time
-from dataclasses import dataclass, field
-from typing import Callable, List, Optional
+from dataclasses import dataclass
+from typing import Callable, Generic, List, Optional, Type, TypeVar
 
 from django.conf import settings
+from pydantic import BaseModel, ValidationError
+
+logger = logging.getLogger(__name__)
+
+T = TypeVar("T", bound=BaseModel)
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +53,15 @@ class LLMResponse:
     tokens_out: int
     cost_usd: float
     model: str
+
+
+@dataclass
+class StructuredResponse(Generic[T]):
+    """Return value of LLMClient.extract_structured()."""
+    result: Optional[T]          # None on permanent failure
+    raw: str                     # last raw content from the model
+    retried: bool                # True if a correction attempt was made
+    failure_reason: Optional[str]  # set when result is None
 
 
 # ---------------------------------------------------------------------------
@@ -86,6 +102,93 @@ class LLMClient:
         self.model = model
         self.timeout = timeout
         self._call_fn = _call_fn or self._real_call
+
+    # ------------------------------------------------------------------
+    # Structured output — parse + one self-correction retry
+    # ------------------------------------------------------------------
+
+    def extract_structured(
+        self,
+        messages: List[LLMMessage],
+        schema: Type[T],
+    ) -> StructuredResponse[T]:
+        """
+        Call the model, extract JSON from the response, validate against
+        `schema` (a Pydantic model), and on failure retry exactly once with
+        the validation error fed back to the model.
+
+        Never raises. Returns StructuredResponse with result=None on permanent
+        failure so callers can record and continue.
+        """
+        resp = self.chat(messages)
+        result, error = self._parse(resp.content, schema)
+
+        if result is not None:
+            return StructuredResponse(result=result, raw=resp.content, retried=False, failure_reason=None)
+
+        # One self-correction attempt
+        correction_messages = messages + [
+            LLMMessage(role="assistant", content=resp.content),
+            LLMMessage(
+                role="user",
+                content=(
+                    f"Your response failed schema validation with this error:\n{error}\n\n"
+                    "Return only the corrected JSON object, nothing else."
+                ),
+            ),
+        ]
+        retry_resp = self.chat(correction_messages)
+        result, error = self._parse(retry_resp.content, schema)
+
+        if result is not None:
+            return StructuredResponse(result=result, raw=retry_resp.content, retried=True, failure_reason=None)
+
+        logger.warning("extract_structured: permanent failure after retry. error=%s raw=%r", error, retry_resp.content[:200])
+        return StructuredResponse(result=None, raw=retry_resp.content, retried=True, failure_reason=error)
+
+    @staticmethod
+    def _parse(content: str, schema: Type[T]) -> tuple[Optional[T], Optional[str]]:
+        """
+        Strip code fences and prose, extract the first JSON object, validate.
+        Returns (parsed, None) on success or (None, error_string) on failure.
+        """
+        # Strip markdown code fences
+        text = re.sub(r"```(?:json)?", "", content).strip()
+
+        # Find the first {...} block, allowing nested braces
+        start = text.find("{")
+        if start == -1:
+            return None, "No JSON object found in response"
+
+        depth, end = 0, -1
+        for i, ch in enumerate(text[start:], start):
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+
+        if end == -1:
+            return None, "Unterminated JSON object"
+
+        raw_json = text[start:end + 1]
+
+        try:
+            data = json.loads(raw_json)
+        except json.JSONDecodeError as exc:
+            return None, f"JSON decode error: {exc}"
+
+        try:
+            return schema.model_validate(data), None
+        except ValidationError as exc:
+            # Summarise errors concisely so the retry prompt isn't bloated
+            errors = "; ".join(
+                f"{' -> '.join(str(l) for l in e['loc'])}: {e['msg']}"
+                for e in exc.errors()
+            )
+            return None, f"Schema validation failed: {errors}"
 
     # ------------------------------------------------------------------
     # Public API
@@ -139,7 +242,7 @@ class LLMClient:
         )
 
         try:
-            resp = client.chat.completions.create(model=model, messages=messages)
+            resp = client.chat.completions.create(model=model, messages=messages, max_tokens=512)
         except openai.RateLimitError as exc:
             raise LLMRateLimitError(str(exc)) from exc
         except openai.InternalServerError as exc:
