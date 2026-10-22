@@ -32,6 +32,7 @@ from apps.intelligence.prompts import render_extraction_prompt  # noqa: E402
 from apps.intelligence.llm.client import LLMClient, LLMMessage, LLMResponse  # noqa: E402
 from apps.intelligence.schemas import JobExtractionResult  # noqa: E402
 from apps.intelligence.utils import normalize_skill  # noqa: E402
+from apps.intelligence.services import resolve_skill  # noqa: E402
 from apps.ingestion.models import RawJobPayload  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -50,14 +51,21 @@ def strip_html(text: str) -> str:
     return re.sub(r"<[^>]+>", " ", html.unescape(text)).strip()
 
 
-def normalise_skill(skill: str) -> str:
-    """Normalise skill string for comparison using existing utility."""
-    return normalize_skill(skill)
+def _resolve_to_canonical(skill: str) -> str:
+    """
+    Resolve a raw skill string to its canonical name via the DB alias table.
+    Falls back to character-level normalisation if Django ORM is unavailable
+    (e.g. dry-run without DB).
+    """
+    try:
+        return resolve_skill(skill).normalised_name
+    except Exception:
+        return normalize_skill(skill)
 
 
 def compare_skills(expected: list[str], predicted: list[str]) -> dict:
-    exp_norm = {normalise_skill(s) for s in expected}
-    pred_norm = {normalise_skill(s) for s in predicted}
+    exp_norm = {_resolve_to_canonical(s) for s in expected}
+    pred_norm = {_resolve_to_canonical(s) for s in predicted}
 
     if not exp_norm:
         # Non-technical job — any prediction is a false positive
@@ -73,9 +81,31 @@ def compare_skills(expected: list[str], predicted: list[str]) -> dict:
     }
 
 
-def call_llm(description: str, client: LLMClient) -> tuple[JobExtractionResult | None, str, dict]:
+_CONTRACT_NORMALISE = {
+    "werkstudent": "part_time",
+    "part-time": "part_time",
+    "full-time": "full_time",
+    "permanent": "full_time",
+    "freelancer": "freelance",
+}
+
+
+def _repair_contract_type(raw_json: str) -> str:
+    """Replace known invalid contract_type values before Pydantic validation."""
+    def replacer(m):
+        val = m.group(1).lower()
+        mapped = _CONTRACT_NORMALISE.get(val)
+        return f'"contract_type": "{mapped}"' if mapped else m.group(0)
+    return re.sub(r'"contract_type":\s*"([^"]+)"', replacer, raw_json)
+
+
+def call_llm(description: str, client: LLMClient, prompt_path: Path | None = None) -> tuple[JobExtractionResult | None, str, dict]:
     """Returns (parsed_result, raw_content, usage_dict). parsed_result is None on schema failure."""
-    prompt = render_extraction_prompt(description[:2000])
+    if prompt_path:
+        template = prompt_path.read_text()
+        prompt = template.replace("{job_description}", description[:2000])
+    else:
+        prompt = render_extraction_prompt(description[:2000])
     resp: LLMResponse = client.chat([
         LLMMessage(role="system", content="You are a job data extractor."),
         LLMMessage(role="user", content=prompt),
@@ -83,13 +113,22 @@ def call_llm(description: str, client: LLMClient) -> tuple[JobExtractionResult |
     raw = resp.content
     usage = {"tokens_in": resp.tokens_in, "tokens_out": resp.tokens_out, "cost_usd": resp.cost_usd}
 
+    # Strip markdown fences if present
+    raw_stripped = re.sub(r"```(?:json)?", "", raw).strip()
     # Extract JSON even if the model wraps it in prose or markdown fences
-    match = re.search(r"\{.*\}", raw, re.DOTALL)
+    match = re.search(r"\{.*\}", raw_stripped, re.DOTALL)
     if not match:
-        return None, raw, usage
+        # Try to repair truncated JSON by closing open braces
+        open_count = raw_stripped.count("{") - raw_stripped.count("}")
+        candidate = raw_stripped[raw_stripped.find("{"):] + "}" * open_count if "{" in raw_stripped and open_count > 0 else None
+        if not candidate:
+            return None, raw, usage
+        raw_json = candidate
+    else:
+        raw_json = match.group()
 
     try:
-        parsed = JobExtractionResult.model_validate_json(match.group())
+        parsed = JobExtractionResult.model_validate_json(_repair_contract_type(raw_json))
         return parsed, raw, usage
     except Exception:
         return None, raw, usage
@@ -99,7 +138,7 @@ def call_llm(description: str, client: LLMClient) -> tuple[JobExtractionResult |
 # Main evaluation loop
 # ---------------------------------------------------------------------------
 
-def run_eval(dry_run: bool = False) -> dict:
+def run_eval(dry_run: bool = False, prompt_path: Path | None = None) -> dict:
     labels = json.loads(FIXTURE_PATH.read_text())
     label_map = {str(item["id"]): item for item in labels}
 
@@ -161,13 +200,32 @@ def run_eval(dry_run: bool = False) -> dict:
             )
             raw, usage = "DRY RUN", {"tokens_in": 0, "tokens_out": 0, "cost_usd": 0.0}
         else:
-            result, raw, usage = call_llm(desc, client)
+            result, raw, usage = call_llm(desc, client, prompt_path=prompt_path)
             total_cost += usage["cost_usd"]
 
         if result is None:
             schema_failures += 1
             per_job.append({"id": job_id, "title": label["title"], "schema_failure": True, "raw": raw[:300]})
             continue
+
+        def _norm_remote(v):
+            if v is True:
+                return "remote"
+            if v is False:
+                return "on_site"
+            if v in (None, "not stated", "not_stated"):
+                return "not_stated"
+            return v
+
+        def _norm_label(field, v):
+            if field == "remote_status":
+                return _norm_remote(v)
+            if field == "contract_type":
+                return {"full-time": "full_time", "part-time": "part_time",
+                        "part-time student": "part_time"}.get(str(v), str(v))
+            if field == "seniority":
+                return {"not stated": "not_stated"}.get(str(v), str(v))
+            return str(v)
 
         # Scalar fields
         field_map = {
@@ -179,6 +237,7 @@ def run_eval(dry_run: bool = False) -> dict:
         for field, (label_key, pred_val) in field_map.items():
             expected = label.get(label_key)
             if expected is not None:
+                expected = _norm_label(field, expected)
                 scalar_total[field] += 1
                 match = str(expected) == str(pred_val)
                 if match:
@@ -206,6 +265,7 @@ def run_eval(dry_run: bool = False) -> dict:
     n = len(labels)
     summary = {
         "total": n,
+        "prompt": str(prompt_path) if prompt_path else "default",
         "schema_failure_rate": round(schema_failures / n, 3) if n else 0,
         "scalar_accuracy": {
             f: round(scalar_correct[f] / scalar_total[f], 3) if scalar_total[f] else None
@@ -225,11 +285,21 @@ def run_eval(dry_run: bool = False) -> dict:
 
 if __name__ == "__main__":
     dry_run = "--dry-run" in sys.argv
-    print(f"Running eval (dry_run={dry_run})...")
-    results = run_eval(dry_run=dry_run)
+
+    prompt_path = None
+    for arg in sys.argv[1:]:
+        if arg.startswith("--prompt="):
+            prompt_path = Path(arg.split("=", 1)[1])
+            if not prompt_path.exists():
+                print(f"ERROR: prompt file not found: {prompt_path}")
+                sys.exit(1)
+
+    print(f"Running eval (dry_run={dry_run}, prompt={prompt_path or 'default'})...")
+    results = run_eval(dry_run=dry_run, prompt_path=prompt_path)
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    out_path = RESULTS_DIR / f"{timestamp}.json"
+    prompt_tag = prompt_path.stem if prompt_path else "default"
+    out_path = RESULTS_DIR / f"{timestamp}_{prompt_tag}.json"
     out_path.write_text(json.dumps(results, indent=2))
 
     print("\n=== SUMMARY ===")
