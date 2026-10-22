@@ -1,5 +1,6 @@
 import hashlib
 import os
+import pytest
 import factory
 from apps.intelligence.models import Company, Location, Job
 from apps.ingestion.models import RawJobPayload
@@ -45,3 +46,8 @@ class RawJobPayloadFactory(factory.django.DjangoModelFactory):
     raw_data = {"id": 1, "title": "Test Job"}
     content_hash = factory.LazyFunction(_random_hash)
     fetched_at = factory.Faker("date_time_this_year", tzinfo=__import__("datetime").timezone.utc)
+
+
+@pytest.fixture
+def job_factory(db):
+    return JobFactory
