@@ -1,0 +1,634 @@
+{
+  "summary": {
+    "total": 20,
+    "prompt": "apps/intelligence/prompts/extract_job_details_v1.md",
+    "schema_failure_rate": 0.05,
+    "scalar_accuracy": {
+      "seniority": 0.526,
+      "contract_type": 0.474,
+      "remote_status": 0.579
+    },
+    "skill_recall_mean": 0.2,
+    "total_false_positives": 40,
+    "total_cost_usd": 0.0
+  },
+  "per_job": [
+    {
+      "id": "16",
+      "title": "AI Response Evaluator",
+      "schema_failure": false,
+      "scalars": {
+        "seniority": {
+          "expected": "not_stated",
+          "predicted": "not_stated",
+          "match": true
+        },
+        "contract_type": {
+          "expected": "contractor",
+          "predicted": "contractor",
+          "match": true
+        },
+        "remote_status": {
+          "expected": "remote",
+          "predicted": "remote",
+          "match": true
+        }
+      },
+      "skills": {
+        "recall": null,
+        "false_positives": 0
+      },
+      "predicted_skills": [],
+      "expected_skills": []
+    },
+    {
+      "id": "10",
+      "title": "Senior .NET Full-stack Developer",
+      "schema_failure": false,
+      "scalars": {
+        "seniority": {
+          "expected": "senior",
+          "predicted": "senior",
+          "match": true
+        },
+        "contract_type": {
+          "expected": "contractor",
+          "predicted": "contractor",
+          "match": true
+        },
+        "remote_status": {
+          "expected": "remote",
+          "predicted": "remote",
+          "match": true
+        }
+      },
+      "skills": {
+        "recall": 1.0,
+        "false_positives": 1
+      },
+      "predicted_skills": [
+        "C#",
+        ".NET",
+        "React",
+        "TypeScript",
+        "English",
+        "Angular"
+      ],
+      "expected_skills": [
+        ".NET",
+        "C#",
+        "React",
+        "TypeScript",
+        "Angular"
+      ]
+    },
+    {
+      "id": "5",
+      "title": "Content Reviewer - United States",
+      "schema_failure": false,
+      "scalars": {
+        "seniority": {
+          "expected": "not_stated",
+          "predicted": "not_stated",
+          "match": true
+        },
+        "contract_type": {
+          "expected": "freelance",
+          "predicted": "freelance",
+          "match": true
+        },
+        "remote_status": {
+          "expected": "remote",
+          "predicted": "remote",
+          "match": true
+        }
+      },
+      "skills": {
+        "recall": null,
+        "false_positives": 0
+      },
+      "predicted_skills": [],
+      "expected_skills": []
+    },
+    {
+      "id": "1",
+      "title": "Software Engineer / AI Code Trainer (Python, Web, Full Stack)",
+      "schema_failure": false,
+      "scalars": {
+        "seniority": {
+          "expected": "mid",
+          "predicted": "senior",
+          "match": false
+        },
+        "contract_type": {
+          "expected": "contractor",
+          "predicted": "full_time",
+          "match": false
+        },
+        "remote_status": {
+          "expected": "remote",
+          "predicted": "remote",
+          "match": true
+        }
+      },
+      "skills": {
+        "recall": 0.0,
+        "false_positives": 9
+      },
+      "predicted_skills": [
+        "Software Engineering",
+        "Debugging & Code Review",
+        "Technical Communication",
+        "Algorithms",
+        "Data Structures",
+        "System Design",
+        "API design",
+        "SQL/NoSQL databases",
+        "Scripting"
+      ],
+      "expected_skills": [
+        "Python",
+        "JavaScript",
+        "TypeScript",
+        "React",
+        "Node.js",
+        "Java",
+        "C++",
+        "Go",
+        "SQL"
+      ]
+    },
+    {
+      "id": "437",
+      "title": "Werkstudent (m/w/d)",
+      "schema_failure": false,
+      "scalars": {
+        "seniority": {
+          "expected": "junior",
+          "predicted": "not_stated",
+          "match": false
+        },
+        "contract_type": {
+          "expected": "part_time",
+          "predicted": "not_stated",
+          "match": false
+        },
+        "remote_status": {
+          "expected": "not_stated",
+          "predicted": "not_stated",
+          "match": true
+        }
+      },
+      "skills": {
+        "recall": null,
+        "false_positives": 0
+      },
+      "predicted_skills": [],
+      "expected_skills": []
+    },
+    {
+      "id": "742",
+      "title": "Finance Manager (m/w/d)",
+      "schema_failure": false,
+      "scalars": {
+        "seniority": {
+          "expected": "senior",
+          "predicted": "senior",
+          "match": true
+        },
+        "contract_type": {
+          "expected": "full_time",
+          "predicted": "full_time",
+          "match": true
+        },
+        "remote_status": {
+          "expected": "on_site",
+          "predicted": "on_site",
+          "match": true
+        }
+      },
+      "skills": {
+        "recall": 0.0,
+        "false_positives": 0
+      },
+      "predicted_skills": [],
+      "expected_skills": [
+        "Excel",
+        "DATEV"
+      ]
+    },
+    {
+      "id": "794",
+      "title": "Principal Engineer, Platform",
+      "schema_failure": false,
+      "scalars": {
+        "seniority": {
+          "expected": "principal",
+          "predicted": "principal",
+          "match": true
+        },
+        "contract_type": {
+          "expected": "full_time",
+          "predicted": "not_stated",
+          "match": false
+        },
+        "remote_status": {
+          "expected": "not_stated",
+          "predicted": "not_stated",
+          "match": true
+        }
+      },
+      "skills": {
+        "recall": null,
+        "false_positives": 0
+      },
+      "predicted_skills": [],
+      "expected_skills": []
+    },
+    {
+      "id": "638",
+      "title": "Betriebselektriker/Automatiker (m/w)",
+      "schema_failure": false,
+      "scalars": {
+        "seniority": {
+          "expected": "mid",
+          "predicted": "mid",
+          "match": true
+        },
+        "contract_type": {
+          "expected": "full_time",
+          "predicted": "full_time",
+          "match": true
+        },
+        "remote_status": {
+          "expected": "on_site",
+          "predicted": "on_site",
+          "match": true
+        }
+      },
+      "skills": {
+        "recall": null,
+        "false_positives": 3
+      },
+      "predicted_skills": [
+        "Abgeschlossene Ausbildung im elektrotechnischen Bereich",
+        "Mehrj\u00e4hrige Berufserfahrung in \u00e4hnlicher Position",
+        "gute elektrische Kenntnisse"
+      ],
+      "expected_skills": []
+    },
+    {
+      "id": "601",
+      "title": "Ing\u00e9nieur \u00e9tudes \u00e9lectricit\u00e9 H/F",
+      "schema_failure": false,
+      "scalars": {
+        "seniority": {
+          "expected": "mid",
+          "predicted": "not_stated",
+          "match": false
+        },
+        "contract_type": {
+          "expected": "full_time",
+          "predicted": "not_stated",
+          "match": false
+        },
+        "remote_status": {
+          "expected": "on_site",
+          "predicted": "hybrid",
+          "match": false
+        }
+      },
+      "skills": {
+        "recall": 0.0,
+        "false_positives": 7
+      },
+      "predicted_skills": [
+        "Conception et calculs",
+        "Travail en \u00e9quipe",
+        "Techniques du b\u00e2timent",
+        "Communication",
+        "R\u00e9glementations en vigueur",
+        "Mod\u00e9lisation BIM - REVIT",
+        "RTT"
+      ],
+      "expected_skills": [
+        "BIM",
+        "Revit"
+      ]
+    },
+    {
+      "id": "567",
+      "title": "Agent polyvalent d'accueil (H/F)",
+      "schema_failure": false,
+      "scalars": {
+        "seniority": {
+          "expected": "junior",
+          "predicted": "not_stated",
+          "match": false
+        },
+        "contract_type": {
+          "expected": "part_time",
+          "predicted": "not_stated",
+          "match": false
+        },
+        "remote_status": {
+          "expected": "on_site",
+          "predicted": "not_stated",
+          "match": false
+        }
+      },
+      "skills": {
+        "recall": null,
+        "false_positives": 0
+      },
+      "predicted_skills": [],
+      "expected_skills": []
+    },
+    {
+      "id": "811",
+      "title": "Ing\u00e9nieur s\u00e9curit\u00e9 Endpoint / poste de travail",
+      "schema_failure": false,
+      "scalars": {
+        "seniority": {
+          "expected": "mid",
+          "predicted": "senior",
+          "match": false
+        },
+        "contract_type": {
+          "expected": "full_time",
+          "predicted": "part_time",
+          "match": false
+        },
+        "remote_status": {
+          "expected": "remote",
+          "predicted": "hybrid",
+          "match": false
+        }
+      },
+      "skills": {
+        "recall": 0.0,
+        "false_positives": 5
+      },
+      "predicted_skills": [
+        "Administration Windows",
+        "Expertise antivirus/EDR",
+        "Connaissance des solutions Defender et Cortex",
+        "Exp\u00e9rience \u00e0 minima dans l'int\u00e9gration d'un nouvel EDR",
+        "Capacit\u00e9 d'intervention au sein d'environnements complexes et multi site"
+      ],
+      "expected_skills": [
+        "Windows"
+      ]
+    },
+    {
+      "id": "576",
+      "title": "Responsable de point de vente (H/F)",
+      "schema_failure": false,
+      "scalars": {
+        "seniority": {
+          "expected": "mid",
+          "predicted": "not_stated",
+          "match": false
+        },
+        "contract_type": {
+          "expected": "full_time",
+          "predicted": "not_stated",
+          "match": false
+        },
+        "remote_status": {
+          "expected": "on_site",
+          "predicted": "not_stated",
+          "match": false
+        }
+      },
+      "skills": {
+        "recall": null,
+        "false_positives": 0
+      },
+      "predicted_skills": [],
+      "expected_skills": []
+    },
+    {
+      "id": "726",
+      "title": "Social Media-Manager (m/w/d) - Remote",
+      "schema_failure": true,
+      "raw": "{\n  \"required_skills\": [],\n  \"nice_to_have_skills\": [],\n  \"seniority\": \"not_stated\",\n  \"years_required\": \"not_stated\",\n  \"remote_status\": \"home office\",\n  \"contract_type\": \"part_time\"\n}"
+    },
+    {
+      "id": "283",
+      "title": "Senior Performance Marketing Manager Meta & Google (H/F)",
+      "schema_failure": false,
+      "scalars": {
+        "seniority": {
+          "expected": "senior",
+          "predicted": "senior",
+          "match": true
+        },
+        "contract_type": {
+          "expected": "full_time",
+          "predicted": "not_stated",
+          "match": false
+        },
+        "remote_status": {
+          "expected": "remote",
+          "predicted": "not_stated",
+          "match": false
+        }
+      },
+      "skills": {
+        "recall": null,
+        "false_positives": 0
+      },
+      "predicted_skills": [],
+      "expected_skills": []
+    },
+    {
+      "id": "458",
+      "title": "Werkstudent Marketing & Social Media (m/w/d)",
+      "schema_failure": false,
+      "scalars": {
+        "seniority": {
+          "expected": "junior",
+          "predicted": "junior",
+          "match": true
+        },
+        "contract_type": {
+          "expected": "part_time",
+          "predicted": "part_time",
+          "match": true
+        },
+        "remote_status": {
+          "expected": "on_site",
+          "predicted": "not_stated",
+          "match": false
+        }
+      },
+      "skills": {
+        "recall": null,
+        "false_positives": 4
+      },
+      "predicted_skills": [
+        "kreativit\u00e4t",
+        "Verantwortung",
+        "Marketing",
+        "Eigene Ideen"
+      ],
+      "expected_skills": []
+    },
+    {
+      "id": "164",
+      "title": "Projektleiter:in W\u00e4rmepumpen (w/m/d) - im Home Office (100% remote)",
+      "schema_failure": false,
+      "scalars": {
+        "seniority": {
+          "expected": "mid",
+          "predicted": "not_stated",
+          "match": false
+        },
+        "contract_type": {
+          "expected": "full_time",
+          "predicted": "not_stated",
+          "match": false
+        },
+        "remote_status": {
+          "expected": "remote",
+          "predicted": "not_stated",
+          "match": false
+        }
+      },
+      "skills": {
+        "recall": null,
+        "false_positives": 0
+      },
+      "predicted_skills": [],
+      "expected_skills": []
+    },
+    {
+      "id": "487",
+      "title": "Senior Manager Programmatic (Mensch)",
+      "schema_failure": false,
+      "scalars": {
+        "seniority": {
+          "expected": "senior",
+          "predicted": "not_stated",
+          "match": false
+        },
+        "contract_type": {
+          "expected": "full_time",
+          "predicted": "full_time",
+          "match": true
+        },
+        "remote_status": {
+          "expected": "remote",
+          "predicted": "remote",
+          "match": true
+        }
+      },
+      "skills": {
+        "recall": null,
+        "false_positives": 2
+      },
+      "predicted_skills": [
+        "Web Development Tools",
+        "Data Analysis Tools"
+      ],
+      "expected_skills": []
+    },
+    {
+      "id": "233",
+      "title": "Marketing Strategy Director",
+      "schema_failure": false,
+      "scalars": {
+        "seniority": {
+          "expected": "director",
+          "predicted": "director",
+          "match": true
+        },
+        "contract_type": {
+          "expected": "full_time",
+          "predicted": "full_time",
+          "match": true
+        },
+        "remote_status": {
+          "expected": "remote",
+          "predicted": "remote",
+          "match": true
+        }
+      },
+      "skills": {
+        "recall": null,
+        "false_positives": 2
+      },
+      "predicted_skills": [
+        "English",
+        "None specified"
+      ],
+      "expected_skills": []
+    },
+    {
+      "id": "715",
+      "title": "SAP Security & Authorizations Consultant",
+      "schema_failure": false,
+      "scalars": {
+        "seniority": {
+          "expected": "mid",
+          "predicted": "mid",
+          "match": true
+        },
+        "contract_type": {
+          "expected": "contractor",
+          "predicted": "contractor",
+          "match": true
+        },
+        "remote_status": {
+          "expected": "remote",
+          "predicted": "remote",
+          "match": true
+        }
+      },
+      "skills": {
+        "recall": null,
+        "false_positives": 7
+      },
+      "predicted_skills": [
+        "SAP S/4HANA Public Cloud",
+        "SAP security/authorizations",
+        "business roles",
+        "business catalogs",
+        "access restrictions",
+        "SAP Identity and Access Management (IAM)",
+        "SAP BTP",
+        "SAP BTP"
+      ],
+      "expected_skills": []
+    },
+    {
+      "id": "15",
+      "title": "Werkstudent Marketing & Social Media (m/w/d)",
+      "schema_failure": false,
+      "scalars": {
+        "seniority": {
+          "expected": "junior",
+          "predicted": "not_stated",
+          "match": false
+        },
+        "contract_type": {
+          "expected": "part_time",
+          "predicted": "full_time",
+          "match": false
+        },
+        "remote_status": {
+          "expected": "on_site",
+          "predicted": "remote",
+          "match": false
+        }
+      },
+      "skills": {
+        "recall": null,
+        "false_positives": 0
+      },
+      "predicted_skills": [],
+      "expected_skills": []
+    }
+  ]
+}

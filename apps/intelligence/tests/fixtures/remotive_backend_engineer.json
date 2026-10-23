@@ -1,0 +1,11 @@
+{
+  "id": 9001,
+  "title": "Backend Engineer",
+  "company_name": "Acme Corp",
+  "job_type": "full_time",
+  "salary": "$120k",
+  "url": "https://remotive.com/job/9001",
+  "description": "Build scalable APIs using Python and PostgreSQL.",
+  "publication_date": "2026-01-15T00:00:00",
+  "candidate_required_location": "Remote"
+}
