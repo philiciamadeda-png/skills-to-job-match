@@ -60,7 +60,10 @@ def _extract_one(job: Job, client: LLMClient) -> dict:
 
     job.extraction_status = Job.ExtractionStatus.SUCCESS
     job.extraction_error = ''
-    job.save(update_fields=['extraction_status', 'extraction_error'])
+    job.seniority = result.seniority.value if result.seniority else ''
+    job.extracted_remote_status = result.remote_status.value if result.remote_status else ''
+    job.extracted_contract_type = result.contract_type.value if result.contract_type else ''
+    job.save(update_fields=['extraction_status', 'extraction_error', 'seniority', 'extracted_remote_status', 'extracted_contract_type'])
 
     # Approximate token counts — LLMClient.chat() returns LLMResponse but
     # extract_structured doesn't expose it. We read from the last response via

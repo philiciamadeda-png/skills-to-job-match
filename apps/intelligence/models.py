@@ -83,6 +83,10 @@ class Job(TimestampedModel):
         db_index=True,
     )
     extraction_error = models.TextField(blank=True)
+    # Fields written back from LLM extraction
+    seniority = models.CharField(max_length=20, blank=True, db_index=True)
+    extracted_remote_status = models.CharField(max_length=20, blank=True)
+    extracted_contract_type = models.CharField(max_length=20, blank=True)
     canonical = models.ForeignKey(
         'self', null=True, blank=True, on_delete=models.SET_NULL,
         related_name='duplicates',
