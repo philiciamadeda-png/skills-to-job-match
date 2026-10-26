@@ -283,9 +283,9 @@ Split: 491 train / 120 test. Class proportions held to within ~1%.
 | Model | Accuracy | Macro F1 | junior F1 | senior F1 | senior_plus F1 |
 |---|---|---|---|---|---|
 | Majority class | 0.40 | 0.19 | 0.00 | 0.00 | 0.57 |
-| Keyword rule (title) | 0.57 | 0.45 | 0.06 | 0.62 | 0.65 |
+| Keyword rule (title) | 0.52 | 0.41 | 0.06 | 0.60 | 0.56 |
 
-The keyword rule is the meaningful baseline to beat — macro F1 **0.45**.
+The keyword rule is the meaningful baseline to beat — macro F1 **0.41**.
 
 ### Trained model
 
