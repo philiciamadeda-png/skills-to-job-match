@@ -331,13 +331,29 @@ TF-IDF (10k features, bigrams, sublinear_tf) + Logistic Regression (class_weight
 
 CV macro-F1: **0.759 ± 0.054**
 
-Saved to `apps/intelligence/ml/seniority_classifier.joblib`.
+Artifacts live in `ml/artifacts/`. The live version is recorded in `ml/artifacts/live.txt`.
+Each artifact has a sidecar JSON with metrics, sklearn version, git commit, and training date.
 
 Full model card (metrics, weaknesses, label provenance): [`docs/model-card-seniority.md`](docs/model-card-seniority.md)
 
+### Training
+
+```bash
+# Train and save a new versioned artifact (sets it as live automatically)
+python apps/intelligence/save_artifact.py --version v2
+```
+
+### Running predictions
+
 ```python
+# Single prediction
 from apps.intelligence.ml_service import predict_seniority
 label = predict_seniority(title, description)
+
+# Batch — returns label, confidence, and model version per item
+from apps.intelligence.ml_service import predict_batch
+results = predict_batch(["Senior Python Engineer 5yr exp", ...])
+# [{'label': 'senior', 'confidence': 0.75, 'model_version': 'v1'}, ...]
 ```
 
 ### Batch prediction task
@@ -353,6 +369,12 @@ print(task_predict_seniority.apply().get())
 Each job stores `seniority`, `seniority_confidence`, and `seniority_model_version`.
 The task is idempotent — re-running skips jobs that already have a `seniority_model_version`.
 
+### Head-to-head comparison
+
+```bash
+python manage.py compare_approaches --eval-set apps/intelligence/fixtures/eval_set.json
+```
+
 ### Notebooks
 
 | Path | Purpose |
@@ -366,7 +388,11 @@ The task is idempotent — re-running skips jobs that already have a `seniority_
 `apps/intelligence/tests/test_ml.py` covers:
 - `make_split` — no near-duplicate pair straddles the split, all rows accounted for
 - `check_leakage` — passes on a clean split
-- `predict_seniority` — returns valid label, never raises, handles senior signal
+- `predict_seniority` / `predict_batch` — valid labels, never raises, batch and single agree
+- artifact — correct output shape and class labels
+- registry — pipeline loaded exactly once across multiple calls
+- version — every prediction result carries a non-empty `model_version`
+- no `fit()` calls anywhere in `apps/` outside `save_artifact.py`
 
 ## Running the tests
 
