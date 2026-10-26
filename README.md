@@ -249,6 +249,72 @@ Full iteration log — hypotheses, failure analysis, and what to try next — in
 | v2      | 0.400       | 60              | 0.421         | 0.316        | 0.368      |
 | v3      | 0.178       | 17              | 0.526         | 0.579        | 0.474      |
 
+## Week 4 — Seniority classifier
+
+### Seniority labels
+
+All 611 jobs carry a 3-class seniority label (`junior`, `senior`, `senior_plus`).
+Labels come from two sources, applied in order:
+
+1. `backfill_seniority` — regex on job title (rule-based, fast, transparent)
+2. `backfill_seniority_ml` — TF-IDF + Logistic Regression model on `not_stated` remainder
+
+Raw fine-grained labels (`mid`, `intern`, `lead`, `principal`, `manager`) are merged into the 3-class scheme at backfill time.
+
+```bash
+python manage.py backfill_seniority       # rule-based pass
+python manage.py backfill_seniority_ml    # ML pass on not_stated jobs
+```
+
+### Train/test split
+
+Groups near-duplicate listings by `(normalised_title, company)` so they always land on the same side. Stratified on group-level majority label.
+
+```python
+from apps.intelligence.ml_split import make_split, check_leakage
+X_train, X_test, y_train, y_test = make_split(df)
+check_leakage(df, X_train, X_test)  # asserts zero leakage
+```
+
+Split: 491 train / 120 test. Class proportions held to within ~1%.
+
+### Baselines (test set, n=120)
+
+| Model | Accuracy | Macro F1 | junior F1 | senior F1 | senior_plus F1 |
+|---|---|---|---|---|---|
+| Majority class | 0.40 | 0.19 | 0.00 | 0.00 | 0.57 |
+| Keyword rule (title) | 0.57 | 0.45 | 0.06 | 0.62 | 0.65 |
+
+The keyword rule is the meaningful baseline to beat — macro F1 **0.45**.
+
+### Trained model
+
+TF-IDF (10k features, bigrams, sublinear_tf) + Logistic Regression (class_weight=balanced).
+
+CV macro-F1: **0.634 ± 0.022**
+
+Saved to `apps/intelligence/ml/seniority_classifier.joblib`.
+
+```python
+from apps.intelligence.ml_service import predict_seniority
+label = predict_seniority(title, description)
+```
+
+### Notebooks
+
+| Path | Purpose |
+|---|---|
+| `ml/notebooks/01_explore.ipynb` | EDA + full train/eval/save workflow |
+| `notebooks/eda_seniority.ipynb` | Class distribution, length, source cross-tab |
+| `notebooks/train_seniority_classifier.ipynb` | Step-by-step training walkthrough |
+
+### Tests
+
+`apps/intelligence/tests/test_ml.py` covers:
+- `make_split` — no near-duplicate pair straddles the split, all rows accounted for
+- `check_leakage` — passes on a clean split
+- `predict_seniority` — returns valid label, never raises, handles senior signal
+
 ## Running the tests
 
 ```bash
