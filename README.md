@@ -249,6 +249,33 @@ Full iteration log — hypotheses, failure analysis, and what to try next — in
 | v2      | 0.400       | 60              | 0.421         | 0.316        | 0.368      |
 | v3      | 0.178       | 17              | 0.526         | 0.579        | 0.474      |
 
+### LLM vs trained model vs keyword rule — head-to-head on hand-labelled eval set
+
+Measured on 18 of 20 eval jobs that carry a mappable seniority label (2 are `not stated`).
+Fine-grained labels (`mid`, `principal`, `director`) merged to 3-class before scoring.
+
+| | LLM (best prompt v1/v3) | Trained model (v1) | Keyword rule |
+|---|---|---|---|
+| Accuracy vs hand labels | 0.526 | 0.50 | **0.72** |
+| Cost per 1,000 jobs | ~$0.50–2.00 (model-dependent) | ~$0 | $0 |
+| Time per 1,000 jobs | ~30–60 min (rate-limited) | ~37s | <1s |
+| Needs network | Yes | No | No |
+| Handles unseen title | Yes (reasoning) | Degrades gracefully | Misses if no keyword |
+
+**What the numbers say:**
+
+The keyword rule wins on seniority accuracy (0.72) against this eval set. The trained model (0.50) underperforms the keyword rule on non-English titles — French and German jobs make up ~40% of the eval set and the model was trained on a corpus dominated by English. The LLM (0.526) is only marginally better than the model and costs orders of magnitude more.
+
+**Production decision:**
+
+Use the **keyword rule for seniority** and the **LLM for skill extraction only**.
+
+Seniority is largely a title-level signal. The keyword rule is transparent, free, instant, and outperforms both the model and the LLM on this eval set. The trained model adds value only for titles with no explicit keyword — a minority of listings — and its accuracy on non-English titles is poor enough to make it unreliable for a multilingual dataset.
+
+The LLM's genuine advantage is skill extraction: it reads the full description and identifies skills the vocabulary would miss. That task has no cheap alternative. Reserving LLM calls for skill extraction and using the keyword rule for seniority cuts LLM cost by roughly the fraction of the prompt devoted to seniority classification — while improving seniority accuracy.
+
+What was traded away: the model's ability to infer seniority from description context (e.g. "5+ years required" in a title-less listing). For those edge cases, the keyword rule returns `senior` as a default, which is the majority class and a reasonable fallback.
+
 ## Week 4 — Seniority classifier
 
 ### Seniority labels
