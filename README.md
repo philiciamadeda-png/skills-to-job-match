@@ -306,6 +306,8 @@ CV macro-F1: **0.759 ± 0.054**
 
 Saved to `apps/intelligence/ml/seniority_classifier.joblib`.
 
+Full model card (metrics, weaknesses, label provenance): [`docs/model-card-seniority.md`](docs/model-card-seniority.md)
+
 ```python
 from apps.intelligence.ml_service import predict_seniority
 label = predict_seniority(title, description)
