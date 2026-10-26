@@ -1,19 +1,59 @@
 # Skills to Job Match
 
-A Django application that ingests remote job listings from public APIs, deduplicates them, and stores them for analysis. Built to support LLM-based skill extraction and job matching in later stages.
+A Django application that ingests remote job listings from public APIs (Remotive, Arbeitnow), deduplicates them, normalises company names and locations, resolves skills against a canonical vocabulary, runs LLM-based skill extraction, and stores structured records for job matching.
+
+## How it works
+
+Raw job data flows through three stages:
+
+1. **Ingestion** — fetches listings from external APIs and stores them as `RawJobPayload` rows (untouched JSON with a content hash for deduplication).
+2. **Transform** — reads unprocessed payloads in batches, normalises fields, resolves skills, and writes structured `Job`, `Company`, and `Location` records.
+3. **Extraction** — runs LLM-based extraction across all unextracted jobs, resolves skills against the canonical vocabulary, and writes `JobSkill` records. Resumable after a crash — only jobs with `extraction_status=pending` are processed.
+
+All three stages run as Celery tasks, with Redis locks preventing overlapping runs and run-log models (`IngestionRun`, `ExtractionRun`) recording every execution.
 
 ## Tech stack
 
 - Python 3.12+, Django 6.x
-- PostgreSQL 16+ (native install or Docker)
-- `django-environ` for environment config
-- `requests` for HTTP ingestion
+- PostgreSQL 16
+- Redis 7 — Celery broker, result backend, and distributed lock store
+- Celery 5 + Celery Beat
+- Pydantic — LLM output schema validation
+- `django-environ`, `requests`
 - `pytest` + `factory-boy` for tests
+
+## Project structure
+
+```
+apps/
+  core/           # Abstract base model (TimestampedModel)
+  ingestion/      # RawJobPayload, IngestionRun, source classes, ingest service, Celery tasks
+  intelligence/   # Company, Location, Skill, Job, JobSkill, ExtractionRun models
+                  # transform service, LLM extraction task, utils
+    llm/
+      client.py   # LLMClient — network retries, structured output with one self-correction retry
+    prompts/      # Versioned extraction prompt templates (v1, v2, v3 …)
+    schemas.py    # Pydantic schema: JobExtractionResult
+    eval/
+      run_eval.py          # Standalone eval script
+      results/             # Timestamped JSON result files per prompt version
+  accounts/       # Placeholder
+  analytics/      # Placeholder
+config/
+  celery.py
+  settings/
+    base.py
+    local.py
+    production.py
+conftest.py
+pytest.ini
+docker-compose.yml
+```
 
 ## Prerequisites
 
 - Python 3.12 or newer
-- PostgreSQL running locally (see below)
+- Docker and Docker Compose (for PostgreSQL and Redis)
 - Git
 
 ## Setup
@@ -30,7 +70,7 @@ source .venv/bin/activate
 ### 2. Install dependencies
 
 ```bash
-pip install django django-environ psycopg2-binary requests pytest pytest-django factory-boy
+pip install django django-environ psycopg2-binary requests celery redis pydantic pytest pytest-django factory-boy
 ```
 
 ### 3. Configure environment variables
@@ -39,31 +79,25 @@ pip install django django-environ psycopg2-binary requests pytest pytest-django 
 cp .env.example .env
 ```
 
-Edit `.env` and set your values. The required variables are:
+Open `.env` and set your values:
 
-| Variable | Description |
-|---|---|
-| `SECRET_KEY` | Django secret key — any long random string |
-| `ALLOWED_HOSTS` | Comma-separated hostnames, e.g. `localhost,127.0.0.1` |
-| `DATABASE_URL` | Full Postgres URL, e.g. `postgres://skills_user:changeme@localhost:5432/skills_db` |
-| `POSTGRES_DB` | Database name, e.g. `skills_db` |
-| `POSTGRES_USER` | Database user, e.g. `skills_user` |
-| `POSTGRES_PASSWORD` | Database password |
+| Variable            | Description                                                        |
+|---------------------|--------------------------------------------------------------------|
+| `SECRET_KEY`        | Any long random string                                             |
+| `ALLOWED_HOSTS`     | Comma-separated hostnames, e.g. `localhost,127.0.0.1`             |
+| `DATABASE_URL`      | e.g. `postgres://skills_user:changeme@localhost:5432/skills_db`   |
+| `POSTGRES_DB`       | Database name, e.g. `skills_db`                                   |
+| `POSTGRES_USER`     | Database user, e.g. `skills_user`                                 |
+| `POSTGRES_PASSWORD` | Database password                                                  |
+| `REDIS_URL`         | e.g. `redis://localhost:6379/0` (this is the default if unset)    |
+| `OPENAI_API_KEY`    | Optional — leave unset to use local Ollama instead                |
+| `LLM_BASE_URL`      | LLM endpoint, default `http://localhost:11434/v1` (Ollama)        |
 
-### 4. Create the database
-
-If you have PostgreSQL installed natively:
-
-```bash
-sudo -u postgres psql -c "CREATE USER skills_user WITH PASSWORD 'changeme';"
-sudo -u postgres psql -c "CREATE DATABASE skills_db OWNER skills_user;"
-sudo -u postgres psql -c "ALTER USER skills_user CREATEDB;"
-```
-
-If you prefer Docker:
+### 4. Start PostgreSQL and Redis
 
 ```bash
 docker compose up -d
+docker compose ps
 ```
 
 ### 5. Run migrations
@@ -72,112 +106,299 @@ docker compose up -d
 python manage.py migrate
 ```
 
-### 6. Create a superuser (optional, for admin access)
+### 6. Seed the skill vocabulary
+
+```bash
+python manage.py seed_skills
+```
+
+Loads 29 canonical skills and 73 aliases. Safe to run multiple times.
+
+### 7. Create a superuser (optional)
 
 ```bash
 python manage.py createsuperuser
 ```
 
-Then visit `http://127.0.0.1:8000/admin` after starting the server.
+Then visit `http://127.0.0.1:8000/admin` after starting the dev server.
 
-## Running the ingestion command
-
-Fetch job listings from Remotive and store them as raw payloads:
+## Running the ingestion command manually
 
 ```bash
 python manage.py ingest_jobs --source remotive
+python manage.py ingest_jobs --source arbeitnow --limit 300
 ```
 
-Running it a second time is safe — duplicate records are skipped automatically.
+Running either command a second time is safe — duplicates are skipped automatically.
+
+## Running LLM extraction
+
+```bash
+# Sample run — 50 jobs, no LLM calls, just counts
+python manage.py shell -c "
+from apps.intelligence.tasks import task_extract_jobs
+print(task_extract_jobs.apply(kwargs={'limit': 50, 'dry_run': True}).get())
+"
+
+# Sample run — 50 jobs with real LLM calls (estimate cost before full run)
+python manage.py shell -c "
+from apps.intelligence.tasks import task_extract_jobs
+print(task_extract_jobs.apply(kwargs={'limit': 50}).get())
+"
+
+# Check the run record
+python manage.py shell -c "
+from apps.intelligence.models import ExtractionRun
+r = ExtractionRun.objects.latest('started_at')
+print(r.status, r.succeeded, r.failed, r.cost_usd, r.duration)
+"
+
+# Full run via Celery worker
+task_extract_jobs.delay()
+```
+
+The task is resumable — re-running it only processes jobs still in `pending` state.
+
+## Running the scheduled pipeline
+
+Open three terminals (all with the virtualenv activated):
+
+```bash
+# Terminal 1 — Celery worker
+celery -A config worker -l info
+
+# Terminal 2 — Celery Beat scheduler
+celery -A config beat -l info
+
+# Terminal 3 — Django dev server (optional, for admin)
+python manage.py runserver
+```
+
+Beat dispatches `task_ingest_jobs` every 2 hours, `task_transform_jobs` 30 minutes later, with run records appearing at `/admin/ingestion/ingestionrun/` and `/admin/intelligence/extractionrun/`.
+
+## Maintaining the skill vocabulary
+
+Every extraction run will create new `Skill` rows flagged `is_auto_created=True` for strings that had no match in the canonical vocabulary or alias table. Some are genuinely new skills; most are variants that should be aliased. Vocabulary quality directly affects match quality — this is an ongoing maintenance job.
+
+### 1. Run the report after each extraction batch
+
+```bash
+python manage.py report_new_skills           # top 50 by job frequency
+python manage.py report_new_skills --limit 100 --min-jobs 2
+```
+
+Read the output. For each entry decide:
+
+| Case | Action |
+|------|--------|
+| Variant of an existing skill (`"Postgres 15"` → PostgreSQL) | `add_skill_alias` |
+| Noise / not a real skill (`"Communication"`) | `add_skill_alias --delete` |
+| Genuinely new canonical skill | Add to `fixtures/skills_seed.py`, re-run `seed_skills` |
+
+### 2. Alias a variant
+
+```bash
+python manage.py add_skill_alias "Postgres 15" --canonical "PostgreSQL"
+python manage.py add_skill_alias "ReactJS" --canonical "React"
+```
+
+This creates the alias **and** re-points any existing `JobSkill` rows that landed on the auto-created skill, so historical extractions are corrected immediately.
+
+### 3. Delete noise
+
+```bash
+python manage.py add_skill_alias "Communication" --delete
+```
+
+### 4. Add a new canonical skill
+
+Edit `apps/intelligence/fixtures/skills_seed.py` and re-run:
+
+```bash
+python manage.py seed_skills
+```
+
+`seed_skills` is idempotent — safe to run multiple times.
+
+## Evaluating prompt quality
+
+The eval set lives at `apps/intelligence/fixtures/eval_set.json` (20 hand-labelled jobs).
+
+```bash
+# Score a prompt version
+python manage.py score_prompt --prompt-version v1
+python manage.py score_prompt --prompt-version v2
+
+# Or run the script directly
+DJANGO_SETTINGS_MODULE=config.settings.local PYTHONPATH=. \
+  python apps/intelligence/eval/run_eval.py \
+  --prompt=apps/intelligence/prompts/extract_job_details_v2.md
+```
+
+Results are written to `apps/intelligence/eval/results/<timestamp>_<prompt_version>.json`.
+
+Headline metric: **skill recall** (missing a required skill is more damaging than a false positive for job matching). Report all metrics; sort prompt versions by recall.
+
+Full iteration log — hypotheses, failure analysis, and what to try next — in [`docs/prompt-iteration.md`](docs/prompt-iteration.md).
+
+### Prompt versions
+
+| Version | skill_recall | false_positives | seniority_acc | contract_acc | remote_acc |
+|---------|-------------|-----------------|---------------|--------------|------------|
+| v1      | 0.200       | 40              | 0.526         | 0.474        | 0.579      |
+| v2      | 0.400       | 60              | 0.421         | 0.316        | 0.368      |
+| v3      | 0.178       | 17              | 0.526         | 0.579        | 0.474      |
+
+### LLM vs trained model vs keyword rule — head-to-head on hand-labelled eval set
+
+Measured on 18 of 20 eval jobs that carry a mappable seniority label (2 are `not stated`).
+Fine-grained labels (`mid`, `principal`, `director`) merged to 3-class before scoring.
+
+| | LLM (best prompt v1/v3) | Trained model (v1) | Keyword rule |
+|---|---|---|---|
+| Accuracy vs hand labels | 0.526 | 0.50 | **0.72** |
+| Cost per 1,000 jobs | ~$0.50–2.00 (model-dependent) | ~$0 | $0 |
+| Time per 1,000 jobs | ~30–60 min (rate-limited) | ~37s | <1s |
+| Needs network | Yes | No | No |
+| Handles unseen title | Yes (reasoning) | Degrades gracefully | Misses if no keyword |
+
+**What the numbers say:**
+
+The keyword rule wins on seniority accuracy (0.72) against this eval set. The trained model (0.50) underperforms the keyword rule on non-English titles — French and German jobs make up ~40% of the eval set and the model was trained on a corpus dominated by English. The LLM (0.526) is only marginally better than the model and costs orders of magnitude more.
+
+**Production decision:**
+
+Use the **keyword rule for seniority** and the **LLM for skill extraction only**.
+
+Seniority is largely a title-level signal. The keyword rule is transparent, free, instant, and outperforms both the model and the LLM on this eval set. The trained model adds value only for titles with no explicit keyword — a minority of listings — and its accuracy on non-English titles is poor enough to make it unreliable for a multilingual dataset.
+
+The LLM's genuine advantage is skill extraction: it reads the full description and identifies skills the vocabulary would miss. That task has no cheap alternative. Reserving LLM calls for skill extraction and using the keyword rule for seniority cuts LLM cost by roughly the fraction of the prompt devoted to seniority classification — while improving seniority accuracy.
+
+What was traded away: the model's ability to infer seniority from description context (e.g. "5+ years required" in a title-less listing). For those edge cases, the keyword rule returns `senior` as a default, which is the majority class and a reasonable fallback.
+
+## Week 4 — Seniority classifier
+
+### Seniority labels
+
+All 611 jobs carry a 3-class seniority label (`junior`, `senior`, `senior_plus`).
+Labels come from two sources, applied in order:
+
+1. `backfill_seniority` — regex on job title (rule-based, fast, transparent)
+2. `backfill_seniority_ml` — TF-IDF + Logistic Regression model on `not_stated` remainder
+
+Raw fine-grained labels (`mid`, `intern`, `lead`, `principal`, `manager`) are merged into the 3-class scheme at backfill time.
+
+```bash
+python manage.py backfill_seniority       # rule-based pass
+python manage.py backfill_seniority_ml    # ML pass on not_stated jobs
+```
+
+### Train/test split
+
+Groups near-duplicate listings by `(normalised_title, company)` so they always land on the same side. Stratified on group-level majority label.
+
+```python
+from apps.intelligence.ml_split import make_split, check_leakage
+X_train, X_test, y_train, y_test = make_split(df)
+check_leakage(df, X_train, X_test)  # asserts zero leakage
+```
+
+Split: 491 train / 120 test. Class proportions held to within ~1%.
+
+### Baselines (test set, n=120)
+
+| Model | Accuracy | Macro F1 | junior F1 | senior F1 | senior_plus F1 |
+|---|---|---|---|---|---|
+| Majority class | 0.40 | 0.19 | 0.00 | 0.00 | 0.57 |
+| Keyword rule (title) | 0.52 | 0.41 | 0.06 | 0.60 | 0.56 |
+
+The keyword rule is the meaningful baseline to beat — macro F1 **0.41**.
+
+### Four-way comparison (test set n=120)
+
+| Combo | CV macro-F1 | Test acc | Test macro | junior F1 | senior F1 | senior_plus F1 |
+|---|---|---|---|---|---|---|
+| title-only / unbalanced | 0.754 ± 0.042 | 0.708 | 0.694 | 0.654 | 0.658 | 0.771 |
+| title-only / balanced   | 0.764 ± 0.045 | 0.725 | 0.723 | 0.746 | 0.658 | 0.765 |
+| title+desc / unbalanced | 0.759 ± 0.054 | 0.800 | 0.803 | 0.862 | 0.744 | 0.804 |
+| title+desc / balanced   | 0.768 ± 0.054 | 0.783 | 0.787 | 0.848 | 0.725 | 0.787 |
+
+Winner: **title+desc / unbalanced** — test macro F1 0.803, well above keyword baseline of 0.41.
+
+### Trained model
+
+TF-IDF (10k features, bigrams, sublinear_tf) + Logistic Regression (class_weight=unbalanced).
+
+CV macro-F1: **0.759 ± 0.054**
+
+Artifacts live in `ml/artifacts/`. The live version is recorded in `ml/artifacts/live.txt`.
+Each artifact has a sidecar JSON with metrics, sklearn version, git commit, and training date.
+
+Full model card (metrics, weaknesses, label provenance): [`docs/model-card-seniority.md`](docs/model-card-seniority.md)
+
+### Training
+
+```bash
+# Train and save a new versioned artifact (sets it as live automatically)
+python apps/intelligence/save_artifact.py --version v2
+```
+
+### Running predictions
+
+```python
+# Single prediction
+from apps.intelligence.ml_service import predict_seniority
+label = predict_seniority(title, description)
+
+# Batch — returns label, confidence, and model version per item
+from apps.intelligence.ml_service import predict_batch
+results = predict_batch(["Senior Python Engineer 5yr exp", ...])
+# [{'label': 'senior', 'confidence': 0.75, 'model_version': 'v1'}, ...]
+```
+
+### Batch prediction task
+
+```bash
+# Predict seniority for all jobs missing a model-based prediction
+python manage.py shell -c "
+from apps.intelligence.tasks import task_predict_seniority
+print(task_predict_seniority.apply().get())
+"
+```
+
+Each job stores `seniority`, `seniority_confidence`, and `seniority_model_version`.
+The task is idempotent — re-running skips jobs that already have a `seniority_model_version`.
+
+### Head-to-head comparison
+
+```bash
+python manage.py compare_approaches --eval-set apps/intelligence/fixtures/eval_set.json
+```
+
+### Notebooks
+
+| Path | Purpose |
+|---|---|
+| `ml/notebooks/01_explore.ipynb` | EDA + full train/eval/save workflow |
+| `notebooks/eda_seniority.ipynb` | Class distribution, length, source cross-tab |
+| `notebooks/train_seniority_classifier.ipynb` | Step-by-step training walkthrough |
+
+### Tests
+
+`apps/intelligence/tests/test_ml.py` covers:
+- `make_split` — no near-duplicate pair straddles the split, all rows accounted for
+- `check_leakage` — passes on a clean split
+- `predict_seniority` / `predict_batch` — valid labels, never raises, batch and single agree
+- artifact — correct output shape and class labels
+- registry — pipeline loaded exactly once across multiple calls
+- version — every prediction result carries a non-empty `model_version`
+- no `fit()` calls anywhere in `apps/` outside `save_artifact.py`
 
 ## Running the tests
 
 ```bash
 pytest
+pytest --cov=apps --cov-report=term-missing   # with coverage
 ```
 
 All tests use a temporary test database and make no real network calls.
-
-## Project structure
-
-```
-apps/
-  core/           # Abstract base models (TimestampedModel)
-  ingestion/      # RawJobPayload model, base source class, RemotiveSource, ingest service
-  intelligence/   # Company, Location, Skill, Job, JobSkill models
-  accounts/       # User accounts (placeholder)
-  analytics/      # Analytics (placeholder)
-config/
-  settings/
-    base.py       # Shared settings
-    local.py      # Development overrides
-    production.py # Production hardening
-conftest.py       # pytest factories
-pytest.ini        # pytest config
-docker-compose.yml
-```
-
-## Progress
-
-### Step 1 — Project scaffold
-- Django project created with `config/` layout
-- Split settings: `base.py` + `local.py`
-- `django-environ` for env var management
-- PostgreSQL 16 via Docker Compose (Redis stubbed for later)
-
-### Step 2 — `.gitignore`
-- Updated to include: `.venv/`, Celery artifacts, logs, coverage, OS/editor files
-
-### Step 3 — `production.py`
-- Added `config/settings/production.py` with `DEBUG=False`, `DATABASES` from env, and HTTPS/cookie security settings
-
-### Step 4 — Database setup
-- PostgreSQL 18 installed and running natively (Docker deferred — Pika OS PPA unreliable)
-- Created `skills_db` database and `skills_user` role
-- `manage.py migrate` ran clean — all Django core tables applied
-
-### Step 5 — Apps scaffold
-- Created `apps/` directory with `__init__.py`
-- Created five apps: `accounts`, `core`, `ingestion`, `intelligence`, `analytics`
-- Fixed `name` in each `apps.py` to use full dotted path (e.g. `apps.ingestion`)
-- Updated `INSTALLED_APPS` in `base.py` with built-ins / third-party / local grouping
-
-### Step 6 — Data models
-- `TimestampedModel` abstract base in `apps/core/models.py`
-- `RawJobPayload` in `apps/ingestion` with content hash dedup, processed flag, FK to Job
-- `Company`, `Location`, `Skill`, `Job`, `JobSkill` in `apps/intelligence`
-- Unique constraints on `Job(source, source_id)`, `Company.normalised_name`, `Skill.normalised_name`, `Location(normalised_country, normalised_city)`
-- `JobSkill` through table with confidence score and extraction metadata
-- Salary structured fields and embedding placeholder on `Job`
-- Migrations created and applied
-
-### Step 7 — Admin
-- Registered `RawJobPayload`, `Company`, `Location`, `Skill`, `Job`, `JobSkill` in admin
-- `raw_data` excluded from list view, kept as readonly in detail view
-- `list_display`, `list_filter`, `search_fields`, `readonly_fields` configured for dev inspection
-
-### Step 8 — Ingestion base class
-- `BaseJobSource` abstract class in `apps/ingestion/base.py`
-- Abstract interface: `source_name`, `fetch_page`, `parse_listings`, `has_next_page`
-- Shared logic: `fetch_all` pagination loop, `_get` HTTP wrapper with retries
-- `FetchError` custom exception for unrecoverable HTTP failures
-- `requests` installed
-
-### Step 9 — RemotiveSource
-- `RemotiveSource` in `apps/ingestion/sources/remotive.py`
-- Fetches from `https://remotive.com/api/remote-jobs` — no auth required
-- Supports optional `limit` param for dev batches
-- `has_next_page` always returns `False` (single-page API)
-- Verified against live API — fetched real job listings
-
-### Step 10 — Ingestion service and management command
-- `apps/ingestion/services.py` — `ingest_from_source()` with hash dedup and `bulk_create`
-- `manage.py ingest_jobs --source remotive --limit N` management command
-- Hash computed from stable content fields only (`id`, `title`, `company_name`, `description`, `job_type`, `salary`, `candidate_required_location`)
-- Verified: first run saves, second run skips all duplicates
-
-### Step 11 — Tests
-- `pytest`, `pytest-django`, `factory-boy` installed
-- `conftest.py` with `CompanyFactory`, `LocationFactory`, `JobFactory`, `RawJobPayloadFactory`
-- 4 tests in `apps/ingestion/tests/test_ingestion.py` — all passing
-- Covers: model creation, content hash stability, mocked HTTP parsing, dedup on double ingest

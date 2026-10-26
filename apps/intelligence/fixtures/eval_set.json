@@ -1,0 +1,222 @@
+[
+  {
+    "id": "16",
+    "source": "remotive",
+    "title": "AI Response Evaluator",
+    "skills": [],
+    "seniority": "not stated",
+    "years_required": "not stated",
+    "remote": true,
+    "contract_type": "contractor",
+    "notes": "No technical skills listed. Soft skills only (critical thinking, research, attention to detail). Contract engagement, not permanent employment."
+  },
+  {
+    "id": "10",
+    "source": "remotive",
+    "title": "Senior .NET Full-stack Developer",
+    "skills": [".NET", "C#", "React", "TypeScript", "Angular"],
+    "seniority": "senior",
+    "years_required": "4+",
+    "remote": true,
+    "contract_type": "contractor",
+    "notes": "Multiple stack variants listed (.NET+React, .NET+C#, Angular+.NET). Extracted skills cover all variants. Years required taken from the most prominent variant (4+ overall, 3+ per stack)."
+  },
+  {
+    "id": "5",
+    "source": "remotive",
+    "title": "Content Reviewer - United States",
+    "skills": [],
+    "seniority": "not stated",
+    "years_required": "not stated",
+    "remote": true,
+    "contract_type": "freelance",
+    "notes": "Badly written — description is mostly inline CSS noise with very little readable content. No technical skills extractable. Freelance/independent contractor implied."
+  },
+  {
+    "id": "1",
+    "source": "remotive",
+    "title": "Software Engineer / AI Code Trainer (Python, Web, Full Stack)",
+    "skills": ["Python", "JavaScript", "TypeScript", "React", "Node.js", "Java", "C++", "Go", "SQL"],
+    "seniority": "mid",
+    "years_required": "not stated",
+    "remote": true,
+    "contract_type": "contractor",
+    "notes": "Skills listed as examples of acceptable stacks, not all required simultaneously. Seniority inferred as mid — no 'senior' label but expects production-grade code and code review ability. Pay range $50-$125/hr suggests contractor."
+  },
+  {
+    "id": "437",
+    "source": "arbeitnow",
+    "title": "Werkstudent (m/w/d)",
+    "skills": [],
+    "seniority": "junior",
+    "years_required": "not stated",
+    "remote": "not stated",
+    "contract_type": "part-time student",
+    "notes": "Extremely short — description is just an image with no readable text. No skills, no location info extractable. Werkstudent implies part-time student role."
+  },
+  {
+    "id": "742",
+    "source": "arbeitnow",
+    "title": "Finance Manager (m/w/d)",
+    "skills": ["Excel", "DATEV"],
+    "seniority": "senior",
+    "years_required": "not stated",
+    "remote": false,
+    "contract_type": "full-time",
+    "notes": "Written in German. Skills are finance domain tools (Excel, DATEV). Hybrid/homeoffice mentioned but primary location is office. 'Several years of experience' stated but no specific number."
+  },
+  {
+    "id": "794",
+    "source": "arbeitnow",
+    "title": "Principal Engineer, Platform",
+    "skills": [],
+    "seniority": "principal",
+    "years_required": "not stated",
+    "remote": "not stated",
+    "contract_type": "full-time",
+    "notes": "Badly encoded — description is double-HTML-escaped, making it unreadable. No skills extractable. Seniority taken from title only."
+  },
+  {
+    "id": "638",
+    "source": "arbeitnow",
+    "title": "Betriebselektriker/Automatiker (m/w)",
+    "skills": [],
+    "seniority": "mid",
+    "years_required": "not stated",
+    "remote": false,
+    "contract_type": "full-time",
+    "notes": "German. Electrical/automation trade role — no software skills. 'Several years experience' stated, no number. On-site by nature of the role."
+  },
+  {
+    "id": "601",
+    "source": "arbeitnow",
+    "title": "Ingénieur études électricité H/F",
+    "skills": ["BIM", "Revit"],
+    "seniority": "mid",
+    "years_required": "not stated",
+    "remote": false,
+    "contract_type": "full-time",
+    "notes": "French. Electrical engineering role. BIM/Revit are the only software skills. On-site construction/engineering work."
+  },
+  {
+    "id": "567",
+    "source": "arbeitnow",
+    "title": "Agent polyvalent d'accueil (H/F)",
+    "skills": [],
+    "seniority": "junior",
+    "years_required": "not stated",
+    "remote": false,
+    "contract_type": "part-time",
+    "notes": "French. Reception/front-desk role. No technical skills. Explicitly targets students. On-site."
+  },
+  {
+    "id": "811",
+    "source": "arbeitnow",
+    "title": "Ingénieur sécurité Endpoint / poste de travail",
+    "skills": ["Windows"],
+    "seniority": "mid",
+    "years_required": "not stated",
+    "remote": true,
+    "contract_type": "full-time",
+    "notes": "French. Cybersecurity/EDR role. Cortex XDR and Microsoft Defender mentioned as tools, not canonical skills in our vocabulary. Windows administration is the closest match. 50% remote stated."
+  },
+  {
+    "id": "576",
+    "source": "arbeitnow",
+    "title": "Responsable de point de vente (H/F)",
+    "skills": [],
+    "seniority": "mid",
+    "years_required": "not stated",
+    "remote": false,
+    "contract_type": "full-time",
+    "notes": "French. Retail store manager role. No technical skills. On-site."
+  },
+  {
+    "id": "726",
+    "source": "arbeitnow",
+    "title": "Social Media-Manager (m/w/d) - Remote",
+    "skills": [],
+    "seniority": "junior",
+    "years_required": "not stated",
+    "remote": true,
+    "contract_type": "full-time",
+    "notes": "German. This is a training programme disguised as a job posting — the company is a Schulungsanbieter (training provider). No prior experience required. No technical skills in our vocabulary."
+  },
+  {
+    "id": "283",
+    "source": "arbeitnow",
+    "title": "Senior Performance Marketing Manager Meta & Google (H/F)",
+    "skills": [],
+    "seniority": "senior",
+    "years_required": "6+",
+    "remote": true,
+    "contract_type": "full-time",
+    "notes": "French. Performance marketing role. Meta Ads, Google Ads, GA4 mentioned but not in our skill vocabulary. No canonical skills match. Remote."
+  },
+  {
+    "id": "458",
+    "source": "arbeitnow",
+    "title": "Werkstudent Marketing & Social Media (m/w/d)",
+    "skills": [],
+    "seniority": "junior",
+    "years_required": "not stated",
+    "remote": false,
+    "contract_type": "part-time student",
+    "notes": "German. Student marketing role. No technical skills in our vocabulary. Hybrid implied."
+  },
+  {
+    "id": "164",
+    "source": "arbeitnow",
+    "title": "Projektleiter:in Wärmepumpen (w/m/d) - im Home Office (100% remote)",
+    "skills": [],
+    "seniority": "mid",
+    "years_required": "3+",
+    "remote": true,
+    "contract_type": "full-time",
+    "notes": "German. Heat pump project manager role. No software skills. 3 years experience stated explicitly. 100% remote stated in title."
+  },
+  {
+    "id": "487",
+    "source": "arbeitnow",
+    "title": "Senior Manager Programmatic (Mensch)",
+    "skills": [],
+    "seniority": "senior",
+    "years_required": "not stated",
+    "remote": true,
+    "contract_type": "full-time",
+    "notes": "German/English mixed. Programmatic advertising role at WPP. No canonical skills match. Remote/hybrid."
+  },
+  {
+    "id": "233",
+    "source": "arbeitnow",
+    "title": "Marketing Strategy Director",
+    "skills": [],
+    "seniority": "director",
+    "years_required": "not stated",
+    "remote": true,
+    "contract_type": "full-time",
+    "notes": "English. Senior marketing leadership role at Airalo. No technical skills in our vocabulary. Fully remote. Contract type is permanent employment (contrato indefinido / local contract depending on country)."
+  },
+  {
+    "id": "715",
+    "source": "arbeitnow",
+    "title": "SAP Security & Authorizations Consultant",
+    "skills": [],
+    "seniority": "mid",
+    "years_required": "not stated",
+    "remote": true,
+    "contract_type": "contractor",
+    "notes": "English. SAP-specific role. SAP S/4HANA, SAP BTP, SAP IAM mentioned but not in our skill vocabulary. 12-month contract, 40hrs/week, remote across EU. Ambiguous: 'experience with SAP BTP is an advantage' — not required, do not count as required skill."
+  },
+  {
+    "id": "15",
+    "source": "arbeitnow",
+    "title": "Werkstudent Marketing & Social Media (m/w/d)",
+    "skills": [],
+    "seniority": "junior",
+    "years_required": "not stated",
+    "remote": false,
+    "contract_type": "part-time student",
+    "notes": "German. Duplicate of id 458 pattern. No technical skills."
+  }
+]
