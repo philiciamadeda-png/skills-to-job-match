@@ -313,6 +313,19 @@ from apps.intelligence.ml_service import predict_seniority
 label = predict_seniority(title, description)
 ```
 
+### Batch prediction task
+
+```bash
+# Predict seniority for all jobs missing a model-based prediction
+python manage.py shell -c "
+from apps.intelligence.tasks import task_predict_seniority
+print(task_predict_seniority.apply().get())
+"
+```
+
+Each job stores `seniority`, `seniority_confidence`, and `seniority_model_version`.
+The task is idempotent — re-running skips jobs that already have a `seniority_model_version`.
+
 ### Notebooks
 
 | Path | Purpose |

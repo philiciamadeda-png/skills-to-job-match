@@ -85,6 +85,8 @@ class Job(TimestampedModel):
     extraction_error = models.TextField(blank=True)
     # Fields written back from LLM extraction
     seniority = models.CharField(max_length=20, blank=True, db_index=True)
+    seniority_confidence = models.FloatField(null=True, blank=True)
+    seniority_model_version = models.CharField(max_length=20, blank=True)
     extracted_remote_status = models.CharField(max_length=20, blank=True)
     extracted_contract_type = models.CharField(max_length=20, blank=True)
     canonical = models.ForeignKey(

@@ -7,6 +7,8 @@ from celery import shared_task
 from django.core.cache import cache
 from django.utils import timezone
 
+from apps.intelligence.ml_service import predict_batch
+
 from apps.intelligence.llm.client import LLMClient, LLMMessage
 from apps.intelligence.models import Job, JobSkill, ExtractionRun, extraction_run
 from apps.intelligence.prompts import render_extraction_prompt
@@ -144,3 +146,43 @@ def task_extract_jobs(self, batch_size: int = 50, limit: int | None = None, dry_
             }
     finally:
         cache.delete(LOCK_KEY)
+
+
+@shared_task
+def task_predict_seniority(batch_size: int = 200) -> dict:
+    """
+    Predict seniority for all jobs missing a model-based prediction.
+    Stores label, confidence, and model version on each Job row.
+    Idempotent — skips jobs that already have seniority_model_version set.
+    """
+    from apps.intelligence.models import Job
+
+    qs = Job.objects.filter(seniority_model_version="").only(
+        "id", "title", "description"
+    )
+    total = updated = 0
+    last_id = 0
+
+    while True:
+        batch = list(qs.filter(id__gt=last_id).order_by("id")[:batch_size])
+        if not batch:
+            break
+
+        texts = [f"{j.title} {j.description}" for j in batch]
+        predictions = predict_batch(texts)
+
+        for job, pred in zip(batch, predictions):
+            job.seniority = pred["label"]
+            job.seniority_confidence = pred["confidence"]
+            job.seniority_model_version = pred["model_version"]
+
+        Job.objects.bulk_update(
+            batch, ["seniority", "seniority_confidence", "seniority_model_version"],
+            batch_size=batch_size,
+        )
+        updated += len(batch)
+        total += len(batch)
+        last_id = batch[-1].pk
+
+    logger.info("task_predict_seniority: updated %d jobs", updated)
+    return {"updated": updated}
