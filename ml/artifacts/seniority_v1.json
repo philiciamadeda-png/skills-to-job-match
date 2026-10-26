@@ -1,0 +1,35 @@
+{
+  "version": "v1",
+  "trained_at": "2026-10-26T09:50:06.368526+00:00",
+  "git_commit": "badc54f",
+  "sklearn_version": "1.9.1",
+  "joblib_version": "1.6.0",
+  "training_rows": 491,
+  "test_rows": 120,
+  "classes": [
+    "junior",
+    "senior",
+    "senior_plus"
+  ],
+  "metrics": {
+    "accuracy": 0.8,
+    "macro_f1": 0.8031,
+    "per_class": {
+      "junior": {
+        "precision": 0.8235,
+        "recall": 0.9032,
+        "f1-score": 0.8615
+      },
+      "senior": {
+        "precision": 0.7838,
+        "recall": 0.7073,
+        "f1-score": 0.7436
+      },
+      "senior_plus": {
+        "precision": 0.7959,
+        "recall": 0.8125,
+        "f1-score": 0.8041
+      }
+    }
+  }
+}

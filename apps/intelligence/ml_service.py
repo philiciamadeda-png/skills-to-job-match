@@ -1,34 +1,16 @@
 """
 ML-based seniority prediction.
-Loads the trained TF-IDF + LR pipeline once per process (module-level cache).
+Loads the live pipeline via the artifact registry (never hardcodes a filename).
 """
-import pathlib
-import joblib
+from apps.intelligence.ml_registry import get_pipeline
 
-_MODEL_PATH = pathlib.Path(__file__).parent / 'ml' / 'seniority_classifier.joblib'
-_pipeline = None
-
-
-def _get_pipeline():
-    global _pipeline
-    if _pipeline is None:
-        _pipeline = joblib.load(_MODEL_PATH)
-    return _pipeline
-
-
-# Maps merged training labels back to the Job.seniority values used in the DB
-_LABEL_MAP = {
-    'junior':      'junior',
-    'senior':      'senior',
-    'senior_plus': 'senior_plus',
-}
+_VALID = {"junior", "senior", "senior_plus"}
 
 
 def predict_seniority(title: str, description: str) -> str:
     """Return a seniority label for a single job. Never raises."""
     try:
-        text = f"{title} {description}"
-        label = _get_pipeline().predict([text])[0]
-        return _LABEL_MAP.get(label, 'not_stated')
+        label = get_pipeline().predict([f"{title} {description}"])[0]
+        return label if label in _VALID else "not_stated"
     except Exception:
-        return 'not_stated'
+        return "not_stated"
