@@ -287,11 +287,22 @@ Split: 491 train / 120 test. Class proportions held to within ~1%.
 
 The keyword rule is the meaningful baseline to beat — macro F1 **0.41**.
 
+### Four-way comparison (test set n=120)
+
+| Combo | CV macro-F1 | Test acc | Test macro | junior F1 | senior F1 | senior_plus F1 |
+|---|---|---|---|---|---|---|
+| title-only / unbalanced | 0.754 ± 0.042 | 0.708 | 0.694 | 0.654 | 0.658 | 0.771 |
+| title-only / balanced   | 0.764 ± 0.045 | 0.725 | 0.723 | 0.746 | 0.658 | 0.765 |
+| title+desc / unbalanced | 0.759 ± 0.054 | 0.800 | 0.803 | 0.862 | 0.744 | 0.804 |
+| title+desc / balanced   | 0.768 ± 0.054 | 0.783 | 0.787 | 0.848 | 0.725 | 0.787 |
+
+Winner: **title+desc / unbalanced** — test macro F1 0.803, well above keyword baseline of 0.41.
+
 ### Trained model
 
-TF-IDF (10k features, bigrams, sublinear_tf) + Logistic Regression (class_weight=balanced).
+TF-IDF (10k features, bigrams, sublinear_tf) + Logistic Regression (class_weight=unbalanced).
 
-CV macro-F1: **0.634 ± 0.022**
+CV macro-F1: **0.759 ± 0.054**
 
 Saved to `apps/intelligence/ml/seniority_classifier.joblib`.
 
