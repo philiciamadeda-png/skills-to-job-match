@@ -487,6 +487,32 @@ Job.objects.filter(embedding_model='text-embedding-3-small').update(embedding=No
 
 **Also store now:** the embedding dimensions (1536 here, baked into the field). If you move to a different-dimension model you will need a new `VectorField` with the new dimension and a new index — plan for that as a separate migration.
 
+### Embedding task
+
+`task_embed_jobs` generates and stores embeddings for every job that doesn't yet have a current one.
+
+```bash
+# Embed all jobs with extracted skills
+python manage.py shell -c "
+from apps.intelligence.tasks import task_embed_jobs
+print(task_embed_jobs.apply().get())
+"
+
+# Check the run record
+python manage.py shell -c "
+from apps.intelligence.models import EmbeddingRun
+r = EmbeddingRun.objects.latest('started_at')
+print(r.status, r.model, r.succeeded, r.failed, r.duration)
+"
+```
+
+**"Already current" means all three conditions hold:**
+1. `embedding` is not null
+2. `embedding_model` matches the configured model
+3. `embedding_hash` matches `SHA-256(embed_text())` — the hash of the exact text fed to the embedder
+
+Only the third condition catches content changes. The hash is computed from `embed_text()` (title + seniority + skills + first 400 chars of description). Unrelated field changes — salary, contract type, source metadata — do not affect `embed_text()` and therefore do not trigger a re-embed. The task is fully resumable: a crash mid-batch leaves already-written rows untouched; the next run picks up from the first job whose hash is still stale.
+
 ### Embedding strategy comparison
 
 Three strategies were tested for what text represents a job:

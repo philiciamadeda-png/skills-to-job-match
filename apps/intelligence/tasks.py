@@ -3,6 +3,7 @@ import logging
 import re
 import time
 
+import requests
 from celery import shared_task
 from django.core.cache import cache
 from django.utils import timezone
@@ -10,7 +11,10 @@ from django.utils import timezone
 from apps.intelligence.ml_service import predict_batch
 
 from apps.intelligence.llm.client import LLMClient, LLMMessage
-from apps.intelligence.models import Job, JobSkill, ExtractionRun, extraction_run
+from apps.intelligence.models import (
+    Job, JobSkill, ExtractionRun, extraction_run,
+    EmbeddingRun, embedding_run,
+)
 from apps.intelligence.prompts import render_extraction_prompt
 from apps.intelligence.services import resolve_skill
 
@@ -186,3 +190,118 @@ def task_predict_seniority(batch_size: int = 200) -> dict:
 
     logger.info("task_predict_seniority: updated %d jobs", updated)
     return {"updated": updated}
+
+
+# ---------------------------------------------------------------------------
+# Embedding task
+# ---------------------------------------------------------------------------
+
+EMBED_LOCK_KEY = 'embedding_lock'
+EMBED_LOCK_TTL = 3600
+EMBED_MODEL = 'nomic-embed-text'
+EMBED_BATCH_SIZE = 32
+OLLAMA_EMBED_URL = 'http://localhost:11434/api/embed'
+
+
+def _embed_batch(texts: list[str]) -> list[list[float]]:
+    """Call Ollama embed endpoint for a batch of texts. Raises on HTTP error."""
+    resp = requests.post(
+        OLLAMA_EMBED_URL,
+        json={'model': EMBED_MODEL, 'input': texts},
+        timeout=60,
+    )
+    resp.raise_for_status()
+    return resp.json()['embeddings']
+
+
+@shared_task(bind=True, max_retries=0)
+def task_embed_jobs(self, batch_size: int = EMBED_BATCH_SIZE, limit: int | None = None):
+    """
+    Generate and store embeddings for every job that doesn't yet have a
+    current one.
+
+    "Current" means: embedding is not null AND embedding_hash matches the
+    SHA-256 of the job's current embed_text() AND embedding_model matches
+    EMBED_MODEL.  Any of those three being wrong triggers a re-embed.
+
+    - Batches API calls (batch_size texts per request)
+    - Resumable: cursor-based pagination, picks up where it left off after a crash
+    - Records the run in EmbeddingRun
+    - Skips jobs whose embedding is already current
+    """
+    if not cache.add(EMBED_LOCK_KEY, '1', EMBED_LOCK_TTL):
+        logger.warning('task_embed_jobs: already running, skipping')
+        return {'skipped': True, 'reason': 'overlap'}
+
+    try:
+        with embedding_run(EMBED_MODEL) as run:
+            # Jobs needing (re-)embedding: null vector, wrong model, or stale hash.
+            # The hash check for staleness happens in Python after fetching the batch
+            # (avoids a computed-column migration). We over-fetch slightly on the
+            # wrong-model / null cases; the hash check filters the rest.
+            qs = (
+                Job.objects
+                .filter(extraction_status=Job.ExtractionStatus.SUCCESS)
+                .prefetch_related('skills')
+                .order_by('id')
+            )
+
+            total = 0
+            last_id = 0
+
+            while True:
+                if limit and total >= limit:
+                    break
+
+                page = list(qs.filter(id__gt=last_id)[:batch_size])
+                if not page:
+                    break
+
+                # Filter to only stale jobs
+                stale = [
+                    j for j in page
+                    if (
+                        j.embedding is None
+                        or j.embedding_model != EMBED_MODEL
+                        or j.embedding_hash != j.embed_text_hash()
+                    )
+                ]
+
+                if stale:
+                    texts = [j.embed_text() for j in stale]
+                    try:
+                        vectors = _embed_batch(texts)
+                    except Exception as exc:
+                        logger.error('task_embed_jobs: batch embed failed — %s', exc)
+                        run.failed += len(stale)
+                        run.processed += len(stale)
+                        last_id = page[-1].pk
+                        total += len(page)
+                        continue
+
+                    now = timezone.now()
+                    for job, vec, text in zip(stale, vectors, texts):
+                        import hashlib
+                        job.embedding = vec
+                        job.embedding_model = EMBED_MODEL
+                        job.embedding_hash = hashlib.sha256(text.encode()).hexdigest()
+
+                    Job.objects.bulk_update(
+                        stale,
+                        ['embedding', 'embedding_model', 'embedding_hash'],
+                        batch_size=batch_size,
+                    )
+                    run.succeeded += len(stale)
+
+                run.processed += len(page)
+                total += len(page)
+                last_id = page[-1].pk
+
+            return {
+                'processed': run.processed,
+                'succeeded': run.succeeded,
+                'failed': run.failed,
+                'model': EMBED_MODEL,
+            }
+    finally:
+        cache.delete(EMBED_LOCK_KEY)
