@@ -43,10 +43,14 @@ _SENIORITY_RANK = {
 # Weights — must sum to 1.0
 # ---------------------------------------------------------------------------
 W_REQUIRED   = 0.40
-W_SEMANTIC   = 0.25
-W_SENIORITY  = 0.20
+W_SEMANTIC   = 0.15   # reduced: semantic alone misleads on boilerplate-heavy descriptions
+W_SENIORITY  = 0.30   # raised: seniority mismatch is a hard problem, not a preference
 W_NICE       = 0.10
 W_RECENCY    = 0.05
+
+# Minimum required skills a job must have to be scored
+# Jobs with fewer skills have inflated required_skill_score from single generic matches
+MIN_JOB_SKILLS = 3
 
 # Recency: full score within this many days, decays to 0 at RECENCY_FLOOR
 RECENCY_HALF_LIFE = 30   # days
@@ -135,7 +139,11 @@ def match_profile(
     if not jobs:
         return []
 
-    # ── Profile data ─────────────────────────────────────────────────────────
+    # Drop jobs with too few skills — single generic skill match inflates req_score
+    jobs = [j for j in jobs if j.skills.count() >= MIN_JOB_SKILLS]
+    if not jobs:
+        return []
+
     profile_skill_ids = set(profile.skills.values_list('pk', flat=True))
     profile_vec = profile.embedding   # list[float] stored as JSONField
 

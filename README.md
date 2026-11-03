@@ -661,3 +661,30 @@ for r in results:
 ```
 
 Each `MatchResult` carries every component score separately so the UI can explain why a job ranked where it did.
+
+## Week 5 — Matching evaluation
+
+Full findings in [`docs/matching-evaluation.md`](docs/matching-evaluation.md).
+
+### Method
+
+4 CVs × top-5 results = 20 judgements rated good / plausible / wrong.
+
+| CV | Profile | Wrong before | Wrong after |
+|---|---|---|---|
+| CV1 | Senior Python Engineer, 7yr | 0/5 | 0/5 |
+| CV2 | Junior Python Developer, 1yr | 4/5 | 3/5 |
+| CV3 | Marketing Manager, 8yr | 5/5 | 5/5 |
+| CV4 | Senior Rails Engineer, 9yr | 0/5 | 0/5 |
+| **Total** | | **9/20 (45%)** | **8/20 (40%)** |
+
+### Fixes applied
+
+1. `MIN_JOB_SKILLS = 3` — jobs with fewer than 3 extracted skills excluded before scoring. Eliminates zero-skill noise jobs (Freelance Writer, Inside Sales Contractor) that inflated `req_score` from a single generic match.
+
+2. Rebalanced weights: semantic 0.25→0.15, seniority 0.20→0.30. Seniority mismatch now costs more; semantic score no longer masks a 2-level gap.
+
+### Remaining failures
+
+- CV2/CV3 still surface wrong results because the dataset has no junior or non-tech jobs — the algorithm correctly penalises mismatches (scores 0.24–0.40) but has nothing better to show.
+- Proficiency level not modelled — beginner Python counts the same as 7 years of Python.
