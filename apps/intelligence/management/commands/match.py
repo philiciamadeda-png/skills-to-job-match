@@ -11,6 +11,7 @@ class Command(BaseCommand):
         parser.add_argument('--cv', type=int, required=True, help='CV pk')
         parser.add_argument('--top', type=int, default=10)
         parser.add_argument('--explain', action='store_true', help='Show per-component scores and skill breakdown')
+        parser.add_argument('--narrate', action='store_true', help='Generate plain-English explanation via LLM')
         parser.add_argument('--remote-only', action='store_true')
 
     def handle(self, *args, **options):
@@ -32,6 +33,10 @@ class Command(BaseCommand):
             self.stdout.write('No matching jobs found.')
             return
 
+        narrate = options['narrate']
+        if narrate:
+            from apps.intelligence.explain import explain_match
+
         self.stdout.write(f"{'Rank':<5} {'Score':<7} {'Title':<45} {'Company':<25} {'Seniority'}")
         self.stdout.write('-' * 110)
 
@@ -51,4 +56,8 @@ class Command(BaseCommand):
                     self.stdout.write(f"      matched : {', '.join(r.matched_required)}")
                 if r.missing_required:
                     self.stdout.write(f"      missing : {', '.join(r.missing_required)}")
-                self.stdout.write('')
+            if narrate:
+                explanation = explain_match(r)
+                if explanation:
+                    self.stdout.write(f"      → {explanation}")
+            self.stdout.write('')
