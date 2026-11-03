@@ -584,3 +584,43 @@ else:
     cv = CV.objects.create(owner=request.user, extracted_text=result.text, status='ready', ...)
     cv.delete_file()  # remove the file once text is stored
 ```
+
+## Week 5 — CV profile extraction
+
+### What was built
+
+- `apps/intelligence/schemas.py` — `CVExtractionResult` schema (skills, seniority, years_experience)
+- `apps/intelligence/prompts/extract_cv_v1.md` — CV extraction prompt
+- `apps/accounts/models.py` — `CVProfile` model: resolved skills (M2M to canonical `Skill`), seniority, years_experience, embedding
+- `apps/accounts/cv_extraction.py` — `extract_cv_profile()` service
+
+### How it reuses existing machinery
+
+Nothing new was written for the LLM call, retries, or cost logging — `LLMClient` and `extract_structured()` are reused directly. `resolve_skill()` is called for every skill the LLM returns, exactly as the job extraction pipeline does. The only genuinely new code is the CV prompt and `CVExtractionResult` schema.
+
+### Why resolve_skill() matters here
+
+If a CV says "Postgres" and a job says "PostgreSQL" and both go through `resolve_skill()`, they resolve to the same canonical `Skill` record and the match works. Without this step, the skill overlap calculation silently returns zero for any variant spelling.
+
+### Embedding strategy — same as jobs
+
+`CVProfile.embed_text()` mirrors `Job.embed_text()` exactly:
+
+```
+CV | {seniority} | skills: {skill1}, {skill2}, ... | {first 400 chars of CV text}
+```
+
+Both sides must be constructed the same way. Embedding jobs as "title + skills + requirements" and CVs as raw document text puts them in different parts of the vector space — similarity scores become meaningless.
+
+### Usage
+
+```python
+from apps.accounts.cv_extraction import extract_cv_profile
+
+# After text extraction:
+ok = extract_cv_profile(cv)  # cv.profile is created/updated
+if ok:
+    profile = cv.profile
+    print(profile.seniority, profile.years_experience)
+    print(list(profile.skills.values_list('name', flat=True)))
+```
