@@ -1,6 +1,7 @@
 from contextlib import contextmanager
 from django.db import models
 from django.utils import timezone
+from pgvector.django import VectorField
 from apps.core.models import TimestampedModel
 
 
@@ -75,7 +76,11 @@ class Job(TimestampedModel):
     salary_currency = models.CharField(max_length=10, blank=True)
     contract_type = models.CharField(max_length=100, blank=True)
     content_hash = models.CharField(max_length=64, db_index=True)
-    embedding = models.JSONField(null=True, blank=True)  # placeholder for pgvector
+    embedding = VectorField(dimensions=1536, null=True, blank=True)
+    embedding_model = models.CharField(
+        max_length=100, blank=True,
+        help_text='Model name that produced the embedding, e.g. text-embedding-3-small',
+    )
     extraction_status = models.CharField(
         max_length=20,
         choices=ExtractionStatus.choices,

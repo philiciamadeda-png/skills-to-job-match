@@ -53,7 +53,7 @@ docker-compose.yml
 ## Prerequisites
 
 - Python 3.12 or newer
-- Docker and Docker Compose (for PostgreSQL and Redis)
+- Podman (or Docker) with Compose support — for PostgreSQL+pgvector and Redis
 - Git
 
 ## Setup
@@ -70,7 +70,7 @@ source .venv/bin/activate
 ### 2. Install dependencies
 
 ```bash
-pip install django django-environ psycopg2-binary requests celery redis pydantic pytest pytest-django factory-boy
+pip install django django-environ psycopg2-binary requests celery redis pydantic pytest pytest-django factory-boy pgvector
 ```
 
 ### 3. Configure environment variables
@@ -402,3 +402,87 @@ pytest --cov=apps --cov-report=term-missing   # with coverage
 ```
 
 All tests use a temporary test database and make no real network calls.
+
+## Week 5 — Vector search (CV-to-job matching)
+
+### pgvector setup
+
+The project now uses `pgvector/pgvector:pg16` instead of plain `postgres:16`.
+The container runs on **port 5433** to avoid conflicts with any native Postgres on the host.
+Update your `.env`:
+
+```
+DATABASE_URL=postgres://skills_user:<password>@localhost:5433/skills_db
+```
+
+Start the container (Podman, host-network mode):
+
+```bash
+podman run -d --name skills_pgvector --network=host \
+  -e POSTGRES_DB=skills_db \
+  -e POSTGRES_USER=skills_user \
+  -e POSTGRES_PASSWORD=<password> \
+  -e PGPORT=5433 \
+  -v pgvector_data:/var/lib/postgresql/data \
+  docker.io/pgvector/pgvector:pg16 postgres -p 5433
+```
+
+Or with podman-compose (after `pip install podman-compose`):
+
+```bash
+podman-compose up -d
+```
+
+### Migration 0008 — what it does
+
+`apps/intelligence/migrations/0008_pgvector_job_embedding.py`:
+
+1. `CREATE EXTENSION IF NOT EXISTS vector` — enables pgvector in the DB (idempotent).
+2. Drops the old `JSONField` placeholder and adds a real `VectorField(dimensions=1536)`.
+3. Adds `embedding_model` (CharField) — records which model produced each embedding so rows can be invalidated when the model changes.
+4. Creates an **HNSW** index with `vector_cosine_ops`.
+
+### Index choice — HNSW vs IVFFlat
+
+| | HNSW | IVFFlat |
+|---|---|---|
+| Query speed | Faster (graph traversal, no training) | Slightly slower |
+| Build time | Slower, more memory during build | Fast, low memory |
+| Needs training step | No | Yes (`lists` must be set before inserting data) |
+| Recall | Higher by default | Tunable via `probes` |
+| Best for | Dataset that grows incrementally | Large static datasets |
+
+**Decision: HNSW.** At a few thousand jobs growing slowly, HNSW is the right choice — no training step, better recall out of the box, and new rows are indexed immediately on insert.
+
+Parameters used: `m=16, ef_construction=64` — sensible defaults for this scale. Raise `ef_construction` (e.g. 128) if recall needs improving later.
+
+### Distance metric — cosine vs inner product
+
+| | Cosine (`vector_cosine_ops`) | Inner product (`vector_ip_ops`) |
+|---|---|---|
+| Normalisation required | No | Yes (vectors must be unit-length) |
+| Meaning | Angle between vectors — ignores magnitude | Dot product — magnitude matters |
+| Use case | General-purpose similarity | Slightly faster when vectors are pre-normalised |
+
+**Decision: cosine distance.** Embedding models (OpenAI, sentence-transformers) do not guarantee unit-length output. Cosine is robust to that and is the standard choice for semantic similarity. Switch to inner product only if you pre-normalise every vector and need the marginal speed gain.
+
+### Changing embedding model later
+
+When you switch models (e.g. `text-embedding-3-small` → `text-embedding-3-large`, or to a local model):
+
+- The new vectors live in a different geometric space — **old and new embeddings are not comparable**.
+- The HNSW index becomes invalid for mixed-model rows.
+- Query results will be silently wrong if you mix models.
+
+**What `embedding_model` buys you:**
+
+```python
+# Invalidate only the rows from the old model — re-embed in batches
+Job.objects.filter(embedding_model='text-embedding-3-small').update(embedding=None, embedding_model='')
+```
+
+- You can re-embed incrementally without touching rows already on the new model.
+- You can filter queries to only rows with a specific model version while migration is in progress.
+- After full re-embedding, `REINDEX INDEX CONCURRENTLY job_embedding_hnsw` rebuilds the index without downtime.
+
+**Also store now:** the embedding dimensions (1536 here, baked into the field). If you move to a different-dimension model you will need a new `VectorField` with the new dimension and a new index — plan for that as a separate migration.
