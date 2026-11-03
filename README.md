@@ -537,3 +537,50 @@ DJANGO_SETTINGS_MODULE=config.settings.local PYTHONPATH=. \
 ```
 
 The script embeds N jobs under all three strategies using `nomic-embed-text` (local Ollama), runs cosine similarity against the query, and prints ranked results side-by-side with the exact text fed to the embedder.
+
+## CV upload and text extraction
+
+### What was built
+
+- `apps/accounts/models.py` — `CV` model: file field, extracted text, status (`pending/ready/failed`), `delete_file()` helper
+- `apps/accounts/extraction.py` — extraction service: magic byte detection, PDF + DOCX support, scanned PDF detection
+- `apps/accounts/forms.py` — `CVUploadForm`: size limit + magic byte validation (not extension-based)
+
+### Libraries chosen
+
+| Library | Used for | What it's bad at |
+|---|---|---|
+| `pdfplumber` | PDF text extraction | Scanned/image PDFs (returns empty string — no OCR); complex multi-column layouts can scramble word order |
+| `python-docx` | DOCX text extraction | Only reads `.docx` (not `.doc`); ignores text in headers, footers, and text boxes |
+
+`python-magic` (libmagic bindings) was the first choice for MIME detection but requires the `libmagic` system library which wasn't available. Magic bytes are checked directly instead — covers all cases needed here.
+
+### File type validation
+
+Validated by reading the first 4 bytes of the file content, not by extension or `Content-Type` header. Both are trivially spoofable. A `.exe` with a `%PDF` header passes; a `.pdf` with a PNG header is rejected.
+
+### Scanned PDF detection
+
+After extraction, if `len(text.strip()) < 50` the result is flagged `is_scanned=True` with a clear message. This catches image-based PDFs that pdfplumber opens successfully but returns no text from.
+
+### Privacy
+
+- `CV.__str__` never includes filename or text content — safe in logs and admin
+- `logger.exception` in the extraction service logs the exception class only, never file contents
+- `CV.delete_file()` removes the stored file once text has been processed — call it after a successful extraction
+
+### Usage
+
+```python
+from apps.accounts.extraction import extract_text
+from apps.accounts.models import CV
+
+# In a view, after form.is_valid():
+result = extract_text(form.cleaned_data['file'])
+if not result.ok:
+    # show result.error to the user
+    ...
+else:
+    cv = CV.objects.create(owner=request.user, extracted_text=result.text, status='ready', ...)
+    cv.delete_file()  # remove the file once text is stored
+```
