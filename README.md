@@ -624,3 +624,40 @@ if ok:
     print(profile.seniority, profile.years_experience)
     print(list(profile.skills.values_list('name', flat=True)))
 ```
+
+## Week 5 — Matching algorithm
+
+### Scoring components
+
+| Component | Weight | What it measures |
+|---|---|---|
+| `required_skill_score` | 0.40 | Proportion of job's required skills the profile has |
+| `semantic_score` | 0.25 | Cosine similarity of profile and job embeddings |
+| `seniority_score` | 0.20 | Level fit — penalises gap in both directions |
+| `nice_to_have_score` | 0.10 | Bonus for desirable skills the profile has |
+| `recency_score` | 0.05 | Exponential decay from published_date (half-life 30 days) |
+
+Seniority penalises in both directions — a gap of 1 level gives 0.6, gap of 2 gives 0.2, gap ≥ 3 gives 0. A graduate shown a principal role and a senior shown an internship both score low.
+
+### Hard filters
+
+Applied before scoring — these are requirements, not preferences:
+
+- `extraction_status = 'success'` — job must have been processed
+- `embedding IS NOT NULL` — job must be embeddable
+- `remote_only=True` — excludes `on_site` jobs when set
+
+### Usage
+
+```python
+from apps.intelligence.matching import match_profile
+
+results = match_profile(profile, remote_only=False, limit=20)
+for r in results:
+    print(r.total_score, r.job.title)
+    print('  matched:', r.matched_required)
+    print('  missing:', r.missing_required)
+    print('  seniority_gap:', r.seniority_gap)
+```
+
+Each `MatchResult` carries every component score separately so the UI can explain why a job ranked where it did.
