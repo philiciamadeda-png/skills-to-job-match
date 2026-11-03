@@ -15,12 +15,12 @@ class Migration(migrations.Migration):
             reverse_sql='DROP EXTENSION IF EXISTS vector;',
         ),
 
-        # 2. Replace the JSONField placeholder with a real vector column (1536 dims = text-embedding-3-small)
+        # 2. Replace the JSONField placeholder with a real vector column (768 dims = nomic-embed-text)
         migrations.RemoveField(model_name='job', name='embedding'),
         migrations.AddField(
             model_name='job',
             name='embedding',
-            field=VectorField(dimensions=1536, null=True, blank=True),
+            field=VectorField(dimensions=768, null=True, blank=True),
         ),
 
         # 3. Store which model produced the embedding so we can filter/invalidate later

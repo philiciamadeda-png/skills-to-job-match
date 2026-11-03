@@ -438,7 +438,7 @@ podman-compose up -d
 `apps/intelligence/migrations/0008_pgvector_job_embedding.py`:
 
 1. `CREATE EXTENSION IF NOT EXISTS vector` — enables pgvector in the DB (idempotent).
-2. Drops the old `JSONField` placeholder and adds a real `VectorField(dimensions=1536)`.
+2. Drops the old `JSONField` placeholder and adds a real `VectorField(dimensions=768)` — sized for `nomic-embed-text` (local Ollama). Change to 1536 for `text-embedding-3-small`.
 3. Adds `embedding_model` (CharField) — records which model produced each embedding so rows can be invalidated when the model changes.
 4. Creates an **HNSW** index with `vector_cosine_ops`.
 
@@ -486,3 +486,28 @@ Job.objects.filter(embedding_model='text-embedding-3-small').update(embedding=No
 - After full re-embedding, `REINDEX INDEX CONCURRENTLY job_embedding_hnsw` rebuilds the index without downtime.
 
 **Also store now:** the embedding dimensions (1536 here, baked into the field). If you move to a different-dimension model you will need a new `VectorField` with the new dimension and a new index — plan for that as a separate migration.
+
+### Embedding strategy comparison
+
+Three strategies were tested for what text represents a job:
+
+| Strategy | What it feeds to the embedder | Risk |
+|---|---|---|
+| `full_description` | Raw job description | Boilerplate (benefits, EEO statements) dominates — unrelated jobs match on culture text |
+| `skills_only` | Comma-joined canonical skill names | Loses context — "Python" matches everything; sparse skills hurt recall |
+| `title_skills` | `{title} \| {seniority} \| skills: {skills} \| {first 400 chars}` | Best signal-to-noise — requirements with enough context to disambiguate |
+
+**Decision: `title_skills`** — confirmed by running the harness below.
+
+The `full_description` failure mode is visible in the output: a generic agency listing (Lemon.io) scores 0.529 on a "Python data engineer" query because its description contains paragraphs about remote work culture that match the query's context words, not its technical requirements.
+
+### Running the comparison harness
+
+```bash
+DJANGO_SETTINGS_MODULE=config.settings.local PYTHONPATH=. \
+  python apps/intelligence/eval/compare_embedding_strategies.py \
+  --query "Python data engineer with Spark and AWS" \
+  --n 10 --top 5
+```
+
+The script embeds N jobs under all three strategies using `nomic-embed-text` (local Ollama), runs cosine similarity against the query, and prints ranked results side-by-side with the exact text fed to the embedder.

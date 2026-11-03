@@ -20,6 +20,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
 
     # Third-party
+    'django.contrib.postgres',
 
     # Local
     'apps.accounts',

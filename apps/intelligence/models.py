@@ -1,7 +1,7 @@
 from contextlib import contextmanager
 from django.db import models
 from django.utils import timezone
-from pgvector.django import VectorField
+from pgvector.django import VectorField, HnswIndex
 from apps.core.models import TimestampedModel
 
 
@@ -76,7 +76,7 @@ class Job(TimestampedModel):
     salary_currency = models.CharField(max_length=10, blank=True)
     contract_type = models.CharField(max_length=100, blank=True)
     content_hash = models.CharField(max_length=64, db_index=True)
-    embedding = VectorField(dimensions=1536, null=True, blank=True)
+    embedding = VectorField(dimensions=768, null=True, blank=True)  # nomic-embed-text; change to 1536 for text-embedding-3-small
     embedding_model = models.CharField(
         max_length=100, blank=True,
         help_text='Model name that produced the embedding, e.g. text-embedding-3-small',
@@ -105,6 +105,13 @@ class Job(TimestampedModel):
         indexes = [
             models.Index(fields=['source', 'source_id']),
             models.Index(fields=['normalised_title', 'company']),
+            HnswIndex(
+                name='job_embedding_hnsw',
+                fields=['embedding'],
+                m=16,
+                ef_construction=64,
+                opclasses=['vector_cosine_ops'],
+            ),
         ]
 
 
