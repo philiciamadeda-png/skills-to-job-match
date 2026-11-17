@@ -1,6 +1,8 @@
 from contextlib import contextmanager
+import hashlib
 from django.db import models
 from django.utils import timezone
+from pgvector.django import VectorField, HnswIndex
 from apps.core.models import TimestampedModel
 
 
@@ -32,6 +34,10 @@ class Skill(TimestampedModel):
     category = models.CharField(max_length=100, blank=True)
     is_auto_created = models.BooleanField(default=False, db_index=True)
 
+    @property
+    def canonical_name(self) -> str:
+        return self.name
+
 
 class SkillAlias(TimestampedModel):
     skill = models.ForeignKey(Skill, on_delete=models.CASCADE, related_name='aliases')
@@ -48,6 +54,9 @@ class JobSkill(TimestampedModel):
     confidence_score = models.FloatField(null=True, blank=True)
     extraction_method = models.CharField(max_length=50, blank=True)
     extracted_at = models.DateTimeField(null=True, blank=True)
+    # False = nice-to-have. Defaults True so rows extracted before the split
+    # keep their old meaning (every skill treated as required).
+    is_required = models.BooleanField(default=True)
 
     class Meta:
         unique_together = [('job', 'skill')]
@@ -75,7 +84,15 @@ class Job(TimestampedModel):
     salary_currency = models.CharField(max_length=10, blank=True)
     contract_type = models.CharField(max_length=100, blank=True)
     content_hash = models.CharField(max_length=64, db_index=True)
-    embedding = models.JSONField(null=True, blank=True)  # placeholder for pgvector
+    embedding = VectorField(dimensions=768, null=True, blank=True)  # nomic-embed-text; change to 1536 for text-embedding-3-small
+    embedding_model = models.CharField(
+        max_length=100, blank=True,
+        help_text='Model name that produced the embedding, e.g. text-embedding-3-small',
+    )
+    embedding_hash = models.CharField(
+        max_length=64, blank=True, db_index=True,
+        help_text='SHA-256 of the text fed to the embedder. Stale when this differs from current embed_text().',
+    )
     extraction_status = models.CharField(
         max_length=20,
         choices=ExtractionStatus.choices,
@@ -100,7 +117,30 @@ class Job(TimestampedModel):
         indexes = [
             models.Index(fields=['source', 'source_id']),
             models.Index(fields=['normalised_title', 'company']),
+            HnswIndex(
+                name='job_embedding_hnsw',
+                fields=['embedding'],
+                m=16,
+                ef_construction=64,
+                opclasses=['vector_cosine_ops'],
+            ),
         ]
+
+    def embed_text(self) -> str:
+        """Canonical text fed to the embedder (title_skills strategy)."""
+        skills = list(self.skills.values_list('name', flat=True))
+        parts = [self.title]
+        if self.seniority:
+            parts.append(self.seniority)
+        if skills:
+            parts.append('skills: ' + ', '.join(skills))
+        snippet = self.description[:400].replace('\n', ' ').strip()
+        if snippet:
+            parts.append(snippet)
+        return ' | '.join(parts)
+
+    def embed_text_hash(self) -> str:
+        return hashlib.sha256(self.embed_text().encode()).hexdigest()
 
 
 class ExtractionRun(models.Model):
@@ -150,3 +190,46 @@ def extraction_run():
             'status', 'finished_at', 'processed', 'succeeded',
             'failed', 'retried', 'tokens_in', 'tokens_out', 'cost_usd', 'error',
         ])
+
+
+class EmbeddingRun(models.Model):
+    class Status(models.TextChoices):
+        RUNNING = 'running', 'Running'
+        SUCCESS = 'success', 'Success'
+        FAILED = 'failed', 'Failed'
+
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.RUNNING)
+    started_at = models.DateTimeField(default=timezone.now)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    model = models.CharField(max_length=100, blank=True)
+    processed = models.PositiveIntegerField(default=0)
+    succeeded = models.PositiveIntegerField(default=0)
+    failed = models.PositiveIntegerField(default=0)
+    error = models.TextField(blank=True)
+
+    @property
+    def duration(self):
+        if self.finished_at and self.started_at:
+            return self.finished_at - self.started_at
+        return None
+
+    class Meta:
+        indexes = [models.Index(fields=['status', '-started_at'])]
+
+    def __str__(self):
+        return f"EmbeddingRun [{self.status}] {self.started_at:%Y-%m-%d %H:%M}"
+
+
+@contextmanager
+def embedding_run(model: str):
+    run = EmbeddingRun.objects.create(model=model)
+    try:
+        yield run
+        run.status = EmbeddingRun.Status.SUCCESS
+    except Exception as exc:
+        run.status = EmbeddingRun.Status.FAILED
+        run.error = str(exc)
+        raise
+    finally:
+        run.finished_at = timezone.now()
+        run.save(update_fields=['status', 'finished_at', 'processed', 'succeeded', 'failed', 'error'])

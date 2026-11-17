@@ -1,0 +1,103 @@
+from django.core.management.base import BaseCommand, CommandError
+
+from apps.accounts.models import CV
+from apps.intelligence.matching import match_profile, resolve_weights
+
+
+class Command(BaseCommand):
+    help = 'Match a CV profile against all jobs and print ranked results.'
+
+    def add_arguments(self, parser):
+        parser.add_argument('--cv', type=int, required=True, help='CV pk')
+        parser.add_argument('--top', type=int, default=10)
+        parser.add_argument('--explain', action='store_true', help='Show per-component scores and skill breakdown')
+        parser.add_argument('--narrate', action='store_true', help='Generate plain-English explanation via LLM')
+        parser.add_argument('--remote-only', action='store_true', help='Hard filter: exclude on_site and hybrid jobs')
+        parser.add_argument('--countries', default='', help='Hard filter: comma-separated ISO codes, e.g. KE,GB')
+        parser.add_argument(
+            '--weight', action='append', default=[], metavar='NAME=VALUE',
+            help='Override a weight, e.g. --weight seniority=0.4 (repeatable). '
+                 'Names: required_skill, semantic, seniority, nice_to_have, recency. '
+                 'Weights are rescaled to sum to 1.',
+        )
+
+    def handle(self, *args, **options):
+        try:
+            cv = CV.objects.select_related('profile').get(pk=options['cv'])
+        except CV.DoesNotExist:
+            raise CommandError(f"CV {options['cv']} not found.")
+
+        if not hasattr(cv, 'profile'):
+            raise CommandError(f"CV {options['cv']} has no profile. Run extract_cv_profile() first.")
+
+        profile = cv.profile
+        self.stdout.write(f"\nProfile  seniority={profile.seniority}  years={profile.years_experience}")
+        self.stdout.write(f"Skills   {', '.join(profile.skills.values_list('name', flat=True))}\n")
+
+        countries = [c.strip() for c in options['countries'].split(',') if c.strip()]
+
+        overrides = {}
+        for item in options['weight']:
+            name, _, value = item.partition('=')
+            try:
+                overrides[name.strip()] = float(value)
+            except ValueError:
+                raise CommandError(f"--weight expects NAME=VALUE, got {item!r}")
+        try:
+            weights = resolve_weights(overrides)
+        except ValueError as exc:
+            raise CommandError(str(exc))
+        self.stdout.write('Weights  ' + '  '.join(f'{k}={v:.3f}' for k, v in weights.items()) + '\n')
+
+        results = match_profile(
+            profile,
+            remote_only=options['remote_only'],
+            countries=countries or None,
+            limit=options['top'],
+            weights=overrides,
+        )
+
+        if not results:
+            self.stdout.write('No matching jobs found.')
+            return
+
+        narrate = options['narrate']
+        if narrate:
+            import time
+            from apps.intelligence.explain import explain_match_with_source
+            sources = []
+
+        self.stdout.write(f"{'Rank':<5} {'Score':<7} {'Title':<45} {'Company':<25} {'Seniority'}")
+        self.stdout.write('-' * 110)
+
+        for i, r in enumerate(results, 1):
+            company = r.job.company.name if r.job.company else '—'
+            self.stdout.write(
+                f"{i:<5} {r.total_score:<7.3f} {r.job.title[:44]:<45} {company[:24]:<25} {r.job.seniority or '—'}"
+            )
+            if options['explain']:
+                self.stdout.write(
+                    f"      req={r.required_skill_score:.2f}  "
+                    f"sem={r.semantic_score:.2f}  "
+                    f"sen={r.seniority_score:.2f} (gap={r.seniority_gap:+d})  "
+                    f"nice={r.nice_to_have_score:.2f}  "
+                    f"recency={r.recency_score:.2f}"
+                )
+                if r.matched_required:
+                    self.stdout.write(f"      matched : {', '.join(r.matched_required)}")
+                if r.missing_required:
+                    self.stdout.write(f"      missing : {', '.join(r.missing_required)}")
+                if r.matched_nice:
+                    self.stdout.write(f"      bonus   : {', '.join(r.matched_nice)}")
+            if narrate:
+                t0 = time.monotonic()
+                explanation, source = explain_match_with_source(r)
+                sources.append(source)
+                self.stdout.write(f"      → {explanation}")
+                self.stdout.write(f"        [{source}, {time.monotonic() - t0:.1f}s]")
+            self.stdout.write('')
+
+        if narrate:
+            n_llm = sources.count('llm')
+            self.stdout.write(f"Explanations: {n_llm}/{len(sources)} from the LLM, "
+                              f"{len(sources) - n_llm} from the template fallback.")

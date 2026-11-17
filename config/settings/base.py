@@ -20,6 +20,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
 
     # Third-party
+    'django.contrib.postgres',
 
     # Local
     'apps.accounts',
@@ -77,6 +78,9 @@ MEDIA_URL = 'media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# No sign-up flow yet — sign in through the admin login page
+LOGIN_URL = 'admin:login'
 
 # LLM
 OPENAI_API_KEY = env("OPENAI_API_KEY", default="")

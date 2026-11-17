@@ -21,8 +21,12 @@ class CompanyFactory(factory.django.DjangoModelFactory):
 class LocationFactory(factory.django.DjangoModelFactory):
     class Meta:
         model = Location
+        # (normalised_country, normalised_city) is unique — reuse the row
+        django_get_or_create = ('normalised_country', 'normalised_city')
 
     raw_text = "Remote"
+    normalised_country = ""
+    normalised_city = ""
     is_remote = True
 
 

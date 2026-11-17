@@ -147,3 +147,30 @@ def test_skills_resolve_to_existing_rows_no_duplicates(job_factory):
     assert job_skills.first().skill == canonical
     # No new Skill rows created
     assert Skill.objects.count() == 1
+
+
+# ---------------------------------------------------------------------------
+# Required vs nice-to-have is stored on JobSkill
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+def test_required_and_nice_to_have_stored_separately(job_factory):
+    job = job_factory(description="Senior Python/Django engineer, Redis a plus.")
+    _extract_one(job, _fake_client(_VALID_JSON))
+
+    flags = dict(JobSkill.objects.filter(job=job).values_list('skill__name', 'is_required'))
+    assert flags == {'Python': True, 'Django': True, 'Redis': False}
+
+
+@pytest.mark.django_db
+def test_skill_in_both_lists_is_required(job_factory):
+    response = (
+        '{"required_skills": ["Python"], "nice_to_have_skills": ["Python"], '
+        '"seniority": "mid", "years_required": "not_stated", '
+        '"remote_status": "not_stated", "contract_type": "not_stated"}'
+    )
+    job = job_factory(description="Python role.")
+    _extract_one(job, _fake_client(response))
+
+    js = JobSkill.objects.get(job=job)
+    assert js.is_required is True

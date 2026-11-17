@@ -64,10 +64,6 @@ class JobExtractionResult(BaseModel):
     @field_validator("required_skills", "nice_to_have_skills", mode="before")
     @classmethod
     def clean_skill_list(cls, v: list) -> list:
-        """
-        Protects against: items that are empty strings or pure whitespace
-        sneaking through (e.g. ["Python", "", " "]).
-        """
         if not isinstance(v, list):
             return v
         cleaned = [s.strip() for s in v if isinstance(s, str) and s.strip()]
@@ -76,22 +72,38 @@ class JobExtractionResult(BaseModel):
     @field_validator("years_required", mode="before")
     @classmethod
     def cap_years(cls, v):
-        """
-        Protects against: hallucinated values like 2024 (a year mistaken for
-        years of experience) or any absurd number above 30.
-        """
         if isinstance(v, int) and v > 30:
             raise ValueError(f"years_required {v} is implausibly large (max 30).")
         return v
 
     @model_validator(mode="after")
     def warn_empty_skills(self) -> "JobExtractionResult":
-        """
-        Protects against: the model silently returning an empty required_skills
-        list.  This is not a hard failure — non-technical jobs legitimately have
-        no skills — but callers can inspect this flag to decide whether to retry.
-        """
         self._empty_skills_warning = (
             not self.required_skills and not self.nice_to_have_skills
         )
         return self
+
+
+class CVExtractionResult(BaseModel):
+    """Structured output from LLM CV extraction."""
+
+    skills: List[str] = Field(
+        default_factory=list,
+        description="All skills mentioned in the CV.",
+    )
+    seniority: Optional[Seniority] = None
+    years_experience: Optional[int | NotStated] = None
+
+    @field_validator("skills", mode="before")
+    @classmethod
+    def clean_skills(cls, v: list) -> list:
+        if not isinstance(v, list):
+            return v
+        return [s.strip() for s in v if isinstance(s, str) and s.strip()]
+
+    @field_validator("years_experience", mode="before")
+    @classmethod
+    def cap_years(cls, v):
+        if isinstance(v, int) and v > 50:
+            raise ValueError(f"years_experience {v} is implausibly large.")
+        return v
