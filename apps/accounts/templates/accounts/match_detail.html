@@ -1,0 +1,36 @@
+{% extends "accounts/base.html" %}
+{% block title %}{{ r.job.title }}{% endblock %}
+{% block content %}
+<p><a href="{% url 'accounts:matches' cv.pk %}{{ filter_query }}">← back to matches</a></p>
+
+<h1>{{ r.job.title }}</h1>
+<p class="muted">
+  {{ r.job.company.name|default:"—" }}{% if r.job.location %} · {{ r.job.location.raw_text }}{% endif %}
+  {% if r.job.external_url %} · <a href="{{ r.job.external_url }}" rel="noopener noreferrer" target="_blank">original posting</a>{% endif %}
+</p>
+
+<h2>Why this match</h2>
+<p>{{ explanation }}</p>
+<p class="muted">
+  {% if explanation_source == "llm" %}Written by the language model from the facts below.
+  {% else %}Generated from the facts below (the language model's answer wasn't used).{% endif %}
+</p>
+
+<h2>Score: {{ r.total_score|floatformat:2 }}</h2>
+<table>
+  <thead><tr><th>Component</th><th>Score (0–1)</th><th>Weight</th><th>Contribution</th></tr></thead>
+  <tbody>
+  {% for name, score, weight, contribution in rows %}
+    <tr><td>{{ name }}</td><td>{{ score|floatformat:2 }}</td><td>{{ weight|floatformat:2 }}</td><td>{{ contribution|floatformat:3 }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<h2>Facts</h2>
+<ul>
+  <li>Your level: {{ profile.seniority|default:"not stated" }} · role level: {{ r.job.seniority|default:"not stated" }} · gap: {{ r.seniority_gap|stringformat:"+d" }} (positive = role below you)</li>
+  <li>Required skills you have: {{ r.matched_required|join:", "|default:"none" }}</li>
+  <li class="error">Required skills missing: {{ r.missing_required|join:", "|default:"none" }}</li>
+  <li>Nice-to-have skills you have: {{ r.matched_nice|join:", "|default:"none" }}</li>
+</ul>
+{% endblock %}

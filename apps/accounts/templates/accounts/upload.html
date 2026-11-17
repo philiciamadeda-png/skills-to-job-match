@@ -1,0 +1,25 @@
+{% extends "accounts/base.html" %}
+{% block content %}
+<h1>Upload your CV</h1>
+
+{% if form.non_field_errors %}
+  {% for e in form.non_field_errors %}<p class="error">{{ e }}</p>{% endfor %}
+{% endif %}
+
+<form method="post" enctype="multipart/form-data">
+  {% csrf_token %}
+  {{ form.as_p }}
+  <button type="submit">Upload and match</button>
+</form>
+<p class="muted">Reading and analysing a CV takes a few seconds. Only the text is kept, not the file.</p>
+
+{% if previous %}
+  <h2>Your CVs</h2>
+  <ul>
+    {% for cv in previous %}
+      <li><a href="{% url 'accounts:matches' cv.pk %}">{{ cv.original_filename }}</a>
+        <span class="muted">uploaded {{ cv.created_at|date:"Y-m-d H:i" }}</span></li>
+    {% endfor %}
+  </ul>
+{% endif %}
+{% endblock %}

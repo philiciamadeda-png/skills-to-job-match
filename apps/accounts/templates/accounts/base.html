@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{% block title %}Skills to Job Match{% endblock %}</title>
+  <style>
+    body { font-family: sans-serif; max-width: 1100px; margin: 1rem auto; padding: 0 1rem; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #ccc; padding: .3rem .5rem; text-align: left; vertical-align: top; }
+    .error { color: #a00; }
+    .muted { color: #666; font-size: .9em; }
+  </style>
+</head>
+<body>
+  <p><a href="{% url 'accounts:upload' %}">Upload a CV</a> · signed in as {{ request.user.username }}</p>
+  {% block content %}{% endblock %}
+</body>
+</html>
