@@ -63,7 +63,9 @@ class Command(BaseCommand):
 
         narrate = options['narrate']
         if narrate:
-            from apps.intelligence.explain import explain_match
+            import time
+            from apps.intelligence.explain import explain_match_with_source
+            sources = []
 
         self.stdout.write(f"{'Rank':<5} {'Score':<7} {'Title':<45} {'Company':<25} {'Seniority'}")
         self.stdout.write('-' * 110)
@@ -78,17 +80,24 @@ class Command(BaseCommand):
                     f"      req={r.required_skill_score:.2f}  "
                     f"sem={r.semantic_score:.2f}  "
                     f"sen={r.seniority_score:.2f} (gap={r.seniority_gap:+d})  "
+                    f"nice={r.nice_to_have_score:.2f}  "
                     f"recency={r.recency_score:.2f}"
                 )
-                    f"nice={r.nice_to_have_score:.2f}  "
                 if r.matched_required:
                     self.stdout.write(f"      matched : {', '.join(r.matched_required)}")
                 if r.missing_required:
                     self.stdout.write(f"      missing : {', '.join(r.missing_required)}")
-            if narrate:
-                explanation = explain_match(r)
                 if r.matched_nice:
                     self.stdout.write(f"      bonus   : {', '.join(r.matched_nice)}")
-                if explanation:
-                    self.stdout.write(f"      → {explanation}")
+            if narrate:
+                t0 = time.monotonic()
+                explanation, source = explain_match_with_source(r)
+                sources.append(source)
+                self.stdout.write(f"      → {explanation}")
+                self.stdout.write(f"        [{source}, {time.monotonic() - t0:.1f}s]")
             self.stdout.write('')
+
+        if narrate:
+            n_llm = sources.count('llm')
+            self.stdout.write(f"Explanations: {n_llm}/{len(sources)} from the LLM, "
+                              f"{len(sources) - n_llm} from the template fallback.")
