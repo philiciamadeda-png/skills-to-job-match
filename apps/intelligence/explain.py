@@ -10,12 +10,18 @@ The LLM output is checked before it is returned (sentence count, length, no
 preamble, names a missing skill when there is one). If the call fails or the
 output fails the checks, a deterministic template built from the same facts is
 returned instead, so callers always get something honest to show.
+
+Explanations are generated on demand and cached by the rendered prompt, so
+reopening a match, or a different CV with identical facts, costs no model call.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 from pathlib import Path
+
+from django.core.cache import cache
 
 from apps.intelligence.llm.client import LLMClient, LLMMessage
 from apps.intelligence.matching import MatchResult, _SENIORITY_RANK
@@ -28,6 +34,7 @@ _PROMPT = (Path(__file__).parent / 'prompts' / f'{PROMPT_VERSION}.md').read_text
 MAX_SKILLS_NAMED = 3      # missing skills named before '+N more'
 MAX_MATCHED_NAMED = 6     # matched skills are listed in full up to this many
 MAX_WORDS = 75            # prompt asks for < 60; small slack before rejecting
+CACHE_TTL = 60 * 60 * 24 * 7   # a week; the key changes anyway when any fact changes
 
 _SENTENCE_END = re.compile(r'(?<=[.!?])\s+')
 _UNLISTED = re.compile(r'not listed|another skill|other skills? you')
@@ -185,6 +192,35 @@ def fallback_explanation(facts: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Cache
+# ---------------------------------------------------------------------------
+
+def cache_key(model: str, prompt: str) -> str:
+    """
+    The rendered prompt holds every fact the explanation depends on, and the
+    prompt template itself, so hashing it with the model name means a new
+    explanation is generated only when the facts, the prompt or the model change.
+    """
+    digest = hashlib.sha256(f'{model}\n{prompt}'.encode()).hexdigest()
+    return f'explain:{PROMPT_VERSION}:{digest}'
+
+
+def _cache_get(key: str):
+    try:
+        return cache.get(key)
+    except Exception as exc:   # cache down: generate instead of failing the page
+        logger.warning('explain_match: cache read failed — %s', exc)
+        return None
+
+
+def _cache_set(key: str, value: tuple[str, str]) -> None:
+    try:
+        cache.set(key, value, CACHE_TTL)
+    except Exception as exc:
+        logger.warning('explain_match: cache write failed — %s', exc)
+
+
+# ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
 
@@ -200,17 +236,28 @@ def explain_match_with_source(
     """
     facts = build_facts(result)
     llm = client or LLMClient()
+    prompt = render_prompt(facts)
+    key = cache_key(llm.model, prompt)
+
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached[0], cached[1]
+
     try:
-        resp = llm.chat([LLMMessage(role='user', content=render_prompt(facts))])
+        resp = llm.chat([LLMMessage(role='user', content=prompt)])
     except Exception as exc:
+        # Not cached: a failed call is transient, so the next view retries the model
         logger.error('explain_match: LLM call failed job=%s — %s', result.job.pk, exc)
         return fallback_explanation(facts), 'template:error'
 
     text = validate_explanation(resp.content, facts)
     if text is None:
         logger.warning('explain_match: output rejected job=%s raw=%r', result.job.pk, resp.content[:200])
-        return fallback_explanation(facts), 'template:rejected'
-    return text, 'llm'
+        text, source = fallback_explanation(facts), 'template:rejected'
+    else:
+        source = 'llm'
+    _cache_set(key, (text, source))
+    return text, source
 
 
 def explain_match(
