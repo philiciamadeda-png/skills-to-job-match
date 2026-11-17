@@ -1,28 +1,23 @@
 """
 CV profile extraction service.
 
-Reuses LLMClient, resolve_skill, and the Ollama embed endpoint — no new
-client wrappers. The only new thing is the CV prompt and CVExtractionResult schema.
+Reuses LLMClient, resolve_skill, and the job embedding helper (_embed_batch,
+EMBED_MODEL) — no new client wrappers. The only new thing is the CV prompt
+and CVExtractionResult schema.
 """
 from __future__ import annotations
 
-import hashlib
 import logging
 from pathlib import Path
-
-import requests
-from django.utils import timezone
 
 from apps.intelligence.llm.client import LLMClient, LLMMessage
 from apps.intelligence.schemas import CVExtractionResult
 from apps.intelligence.services import resolve_skill
+from apps.intelligence.tasks import EMBED_MODEL, _embed_batch
 
 logger = logging.getLogger(__name__)
 
 _PROMPT_PATH = Path(__file__).parent.parent / 'intelligence' / 'prompts' / 'extract_cv_v1.md'
-
-OLLAMA_EMBED_URL = 'http://localhost:11434/api/embed'
-EMBED_MODEL = 'nomic-embed-text'
 
 
 def _render_cv_prompt(cv_text: str) -> str:
@@ -77,16 +72,9 @@ def extract_cv_profile(cv) -> bool:
 
     profile.skills.set(resolved_skills)
 
-    # Embed using the same strategy as Job.embed_text()
+    # Embed with the same text strategy, model and endpoint as jobs
     try:
-        text = profile.embed_text()
-        resp = requests.post(
-            OLLAMA_EMBED_URL,
-            json={'model': EMBED_MODEL, 'input': text},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        vector = resp.json()['embeddings'][0]
+        vector = _embed_batch([profile.embed_text()])[0]
         profile.embedding = vector
         profile.embedding_model = EMBED_MODEL
         profile.save(update_fields=['embedding', 'embedding_model', 'updated_at'])

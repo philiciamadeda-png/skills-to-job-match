@@ -34,6 +34,10 @@ class Skill(TimestampedModel):
     category = models.CharField(max_length=100, blank=True)
     is_auto_created = models.BooleanField(default=False, db_index=True)
 
+    @property
+    def canonical_name(self) -> str:
+        return self.name
+
 
 class SkillAlias(TimestampedModel):
     skill = models.ForeignKey(Skill, on_delete=models.CASCADE, related_name='aliases')
