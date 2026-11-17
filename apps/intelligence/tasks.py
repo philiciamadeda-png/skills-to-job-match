@@ -52,14 +52,15 @@ def _extract_one(job: Job, client: LLMClient) -> dict:
 
     result = sr.result
 
-    # Persist skills
+    # Persist skills — nice-to-have first so a skill listed in both ends up required
     now = timezone.now()
-    for raw_skill in list(result.required_skills) + list(result.nice_to_have_skills):
+    tagged = [(s, False) for s in result.nice_to_have_skills] + [(s, True) for s in result.required_skills]
+    for raw_skill, is_required in tagged:
         try:
             skill = resolve_skill(raw_skill)
-            JobSkill.objects.get_or_create(
+            JobSkill.objects.update_or_create(
                 job=job, skill=skill,
-                defaults={'extraction_method': 'llm', 'extracted_at': now},
+                defaults={'extraction_method': 'llm', 'extracted_at': now, 'is_required': is_required},
             )
         except Exception as exc:
             logger.warning('extract: skill resolve failed job=%s skill=%r — %s', job.pk, raw_skill, exc)

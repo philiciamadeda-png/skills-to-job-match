@@ -54,6 +54,9 @@ class JobSkill(TimestampedModel):
     confidence_score = models.FloatField(null=True, blank=True)
     extraction_method = models.CharField(max_length=50, blank=True)
     extracted_at = models.DateTimeField(null=True, blank=True)
+    # False = nice-to-have. Defaults True so rows extracted before the split
+    # keep their old meaning (every skill treated as required).
+    is_required = models.BooleanField(default=True)
 
     class Meta:
         unique_together = [('job', 'skill')]
