@@ -35,6 +35,8 @@ MAX_SKILLS_NAMED = 3      # missing skills named before '+N more'
 MAX_MATCHED_NAMED = 6     # matched skills are listed in full up to this many
 MAX_WORDS = 75            # prompt asks for < 60; small slack before rejecting
 CACHE_TTL = 60 * 60 * 24 * 7   # a week; the key changes anyway when any fact changes
+# Bump whenever validate_explanation() changes, so text accepted by older checks is not served
+CHECKS_VERSION = 2
 
 _SENTENCE_END = re.compile(r'(?<=[.!?])\s+')
 _UNLISTED = re.compile(r'not listed|another skill|other skills? you')
@@ -43,6 +45,12 @@ _PREAMBLE = re.compile(r'^(here(\'s| is)|sure|explanation:|certainly|start with|
 _EXAMPLE_SKILLS = ('xero', 'ifrs', 'sage', 'power bi', 'triage', 'rostering', 'budgeting', 'cqc', 'vat')
 _FLATTERY = re.compile(r'\b(strong|excellent|perfect|great|ideal|fit|good match)\b', re.IGNORECASE)
 _SCORE = re.compile(r'\b0\.\d+\b|\bscore\b', re.IGNORECASE)
+_NUMBER_WORDS = {w: i for i, w in enumerate(
+    'zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen '
+    'sixteen seventeen eighteen nineteen twenty'.split())}
+_NUMBER = r'\d+|' + '|'.join(_NUMBER_WORDS)
+_NUMBER_TOKEN = re.compile(rf'\b({_NUMBER})\b')
+_X_OF_Y = re.compile(rf'\b({_NUMBER}) of (?:the |your )?({_NUMBER})\b')
 
 # Direction checks for a level gap: (must match, must not match)
 _ROLE_ABOVE = (re.compile(r'above your|more senior than you|you are \w+ levels? below'),
@@ -130,6 +138,29 @@ def render_prompt(facts: dict) -> str:
 # Output checks and fallback
 # ---------------------------------------------------------------------------
 
+def _number(token: str) -> int | None:
+    return int(token) if token.isdigit() else _NUMBER_WORDS.get(token)
+
+
+def _counts_match_facts(lower: str, facts: dict) -> bool:
+    """
+    Every number in the text must be one of the computed counts, and an
+    "X of Y" phrase must use the real required total. Numbers inside the job
+    title or a skill name (e.g. "Web3", "Python 3") are not counts and are ignored.
+    """
+    for name in [facts['job_title']] + facts['matched_required_list'] + facts['missing_required_list'] + facts['matched_nice_list']:
+        lower = re.sub(rf'(?<!\w){re.escape(name.lower())}(?!\w)', ' ', lower)
+    allowed = {facts['matched_count'], facts['missing_count'], facts['required_count'],
+               len(facts['matched_nice_list']), abs(facts['seniority_gap'])}
+    for token in _NUMBER_TOKEN.findall(lower):
+        if _number(token) not in allowed:
+            return False
+    for part, total in _X_OF_Y.findall(lower):
+        if _number(total) != facts['required_count'] or _number(part) not in (facts['matched_count'], facts['missing_count']):
+            return False
+    return True
+
+
 def _sentences(text: str) -> list[str]:
     return [s for s in _SENTENCE_END.split(text.strip()) if s]
 
@@ -158,6 +189,8 @@ def validate_explanation(text: str, facts: dict) -> str | None:
         must, must_not = _ROLE_ABOVE if facts['seniority_gap'] < 0 else _ROLE_BELOW
         if not must.search(lower) or must_not.search(lower):
             return None   # silent about the level gap, or states it the wrong way round
+    if not _counts_match_facts(lower, facts):
+        return None   # a count that isn't one of the computed facts, e.g. "five of the six" for 0 of 4
     return text
 
 
@@ -202,7 +235,7 @@ def cache_key(model: str, prompt: str) -> str:
     explanation is generated only when the facts, the prompt or the model change.
     """
     digest = hashlib.sha256(f'{model}\n{prompt}'.encode()).hexdigest()
-    return f'explain:{PROMPT_VERSION}:{digest}'
+    return f'explain:{PROMPT_VERSION}:checks{CHECKS_VERSION}:{digest}'
 
 
 def _cache_get(key: str):
