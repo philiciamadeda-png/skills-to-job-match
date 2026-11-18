@@ -426,7 +426,7 @@ pytest --cov=apps --cov-report=term-missing   # with coverage
 
 All tests use a temporary test database and make no real network calls. The test database needs the `pgvector` extension, so run them against the project's Docker Postgres (port 5433 in `.env.example`), not a plain system Postgres.
 
-Current suite: **125 tests, all passing** (`pytest -v`, Python 3.12, PostgreSQL + pgvector 0.6).
+Current suite: **135 tests, all passing** (`pytest -v`, Python 3.12, PostgreSQL + pgvector 0.6).
 
 ## Week 5 — Vector search (CV-to-job matching)
 
@@ -615,7 +615,7 @@ else:
 ### What was built
 
 - `apps/intelligence/schemas.py` — `CVExtractionResult` schema (skills, seniority, years_experience)
-- `apps/intelligence/prompts/extract_cv_v1.md` — CV extraction prompt
+- `apps/intelligence/prompts/extract_cv_v2.md` — CV extraction prompt (v1 kept for comparison)
 - `apps/accounts/models.py` — `CVProfile` model: resolved skills (M2M to canonical `Skill`), seniority, years_experience, embedding
 - `apps/accounts/cv_extraction.py` — `extract_cv_profile()` service
 - `apps/accounts/services.py` — `build_profile(cv_id)` public entry point (loads the CV, runs extraction, returns the `CVProfile`; raises `ProfileBuildError` on failure)
@@ -627,6 +627,15 @@ else:
 Nothing new was written for the LLM call, retries, or validation — `LLMClient` and `extract_structured()` are reused directly. `resolve_skill()` is called for every skill the LLM returns, exactly as the job extraction pipeline does. The embedding call reuses `_embed_batch()` and `EMBED_MODEL` from `apps/intelligence/tasks.py`, so CVs and jobs are always embedded by the same model and endpoint — changing the model in one place changes it for both. The only genuinely new code is the CV prompt and `CVExtractionResult` schema.
 
 Cost: `LLMClient` holds the cost table, but `extract_structured()` does not return token counts, so per-CV cost is not recorded yet. This is the same known gap as job extraction (see `_extract_one()` in `tasks.py`); with the local Ollama model the cost is 0.
+
+### Invented skills are dropped
+
+With v1 of the prompt, llama3.2 added "Agile" and "Scrum" to every tech CV in the evaluation set, although none of them mention either. The words came from the prompt's own example ("domain-specific (e.g. "Agile", "Scrum")"). Common skills like these inflate required-skill coverage for every tech job. Two fixes:
+
+- **Prompt v2** has no skill names in its rules, and says each skill must appear word for word in the CV.
+- **`skills_in_text()`** drops any returned skill that doesn't appear as a whole word or phrase in the CV text the model was shown (case- and whitespace-insensitive), and logs what it dropped. The prompt asks; the code enforces.
+
+Re-run on the 4 evaluation CVs: Agile/Scrum gone from all of them, every real skill kept, and one more invented name caught ("Postgres" on CVs that only say "PostgreSQL"). Trade-off: a skill the model rewords (e.g. "Postgres" for a CV that says "PostgreSQL") is dropped rather than kept. That's safe here because the model also returns the wording that is in the text, and the warning in the log shows anything dropped.
 
 ### Seniority vocabulary
 
@@ -919,7 +928,7 @@ Full findings in [`docs/matching-evaluation.md`](docs/matching-evaluation.md).
 | **Explanations are faithful** | `test_explanation_describes_the_facts_of_a_real_match` — a real `match_profile()` result passed to a mocked model: the prompt carries exactly its levels, gap and skill lists, and never the job description or CV text; the text returned describes those same facts. Plus `apps/intelligence/tests/test_explain.py`. |
 
 ```bash
-pytest                                              # all 125
+pytest                                              # all 135
 pytest apps/intelligence/tests/test_matching.py apps/intelligence/tests/test_explain.py apps/accounts/tests -v
 ```
 
@@ -961,7 +970,7 @@ End-to-end on a throwaway Postgres + pgvector with the real local model and thre
 
 ### Verification — `pytest -v` and `runserver`
 
-- `pytest -v`: **125 passed, 0 failed.**
+- `pytest -v`: **135 passed, 0 failed.**
 - `python manage.py runserver`, driven over HTTP exactly as a browser would (throwaway Postgres + pgvector, local llama3.2 and nomic-embed-text, three sample jobs):
 
 | Step | Result |

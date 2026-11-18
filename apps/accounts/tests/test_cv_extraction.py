@@ -163,3 +163,36 @@ def test_embed_failure_is_non_fatal(cv, postgres):
     cv.profile.refresh_from_db()
     assert cv.profile.embedding is None
     assert list(cv.profile.skills.all()) == [postgres]
+
+
+# ── Skills the CV never mentions are dropped ──────────────────────────────
+
+def test_invented_skills_dropped_before_matching(cv, postgres):
+    """The model added 'Agile' and 'Scrum' (from the prompt's own examples) to CVs without them."""
+    ok, _ = _run(cv, {'skills': ['Postgres', 'Python', 'Agile', 'Scrum'], 'seniority': 'senior', 'years_experience': 7})
+
+    assert ok is True
+    names = set(cv.profile.skills.values_list('name', flat=True))
+    assert names == {'PostgreSQL', 'Python'}
+
+
+@pytest.mark.parametrize('skill,text,kept', [
+    ('Python', 'Built APIs in Python.', True),
+    ('python', 'Built APIs in PYTHON.', True),                      # case-insensitive
+    ('CI/CD with GitHub Actions', 'Set up CI/CD with\nGitHub  Actions.', True),   # whitespace differences
+    ('C++', 'Wrote firmware in C++ and C.', True),
+    ('Node.js', 'Services in Node.js', True),
+    ('Agile', 'Python developer.', False),
+    ('Go', 'Good at Google Sheets.', False),                        # whole words only
+    ('Java', 'JavaScript developer.', False),
+])
+def test_skills_in_text(skill, text, kept):
+    from apps.accounts.cv_extraction import skills_in_text
+    assert skills_in_text([skill], text) == (([skill], []) if kept else ([], [skill]))
+
+
+def test_prompt_has_no_skill_examples_to_copy():
+    from apps.accounts.cv_extraction import _render_cv_prompt
+    prompt = _render_cv_prompt('CV TEXT')
+    assert 'Agile' not in prompt and 'Scrum' not in prompt
+    assert prompt.rstrip().endswith('CV TEXT')
