@@ -33,3 +33,6 @@ htmlcov/
 *.swp
 *.swo
 .idea/
+
+# Evaluation CVs (personal data, keep out of git)
+eval_cvs/
