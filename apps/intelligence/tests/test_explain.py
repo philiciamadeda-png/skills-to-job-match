@@ -8,7 +8,8 @@ from types import SimpleNamespace
 import pytest
 
 from apps.intelligence.explain import (
-    build_facts, explain_match, fallback_explanation, render_prompt, validate_explanation,
+    build_facts, cache_key, explain_match, explain_match_with_source, fallback_explanation,
+    render_prompt, validate_explanation,
 )
 from apps.intelligence.llm.client import LLMClient, LLMResponse
 from apps.intelligence.matching import MatchResult
@@ -140,12 +141,14 @@ def test_llm_error_falls_back_or_empty():
 
 
 def test_source_reported():
-    from apps.intelligence.explain import explain_match_with_source
+    from django.core.cache import cache
 
     client, _ = _client(GOOD)
     assert explain_match_with_source(_result(), client)[1] == 'llm'
+    cache.clear()
     client, _ = _client('One sentence, Kubernetes.')
     assert explain_match_with_source(_result(), client)[1] == 'template:rejected'
+    cache.clear()
     client, _ = _client(exc=RuntimeError('down'))
     assert explain_match_with_source(_result(), client)[1] == 'template:error'
 
@@ -167,3 +170,125 @@ def test_fallback_is_two_or_three_sentences_and_names_gaps(kw):
     facts = build_facts(_result(**kw))
     text = fallback_explanation(facts)
     assert validate_explanation(text, facts) == text
+
+
+# ── Cache ─────────────────────────────────────────────────────────────────
+
+def _counting_client(content=None, exc=None):
+    calls = []
+
+    def call(model, messages, timeout):
+        calls.append(messages[0]['content'])
+        if exc:
+            raise exc
+        return LLMResponse(content=content, tokens_in=0, tokens_out=0, cost_usd=0.0, model='test')
+
+    return LLMClient(_call_fn=call), calls
+
+
+def test_reopening_a_match_does_not_call_the_model_again():
+    client, calls = _counting_client(GOOD)
+    first = explain_match_with_source(_result(), client=client)
+    second = explain_match_with_source(_result(), client=client)
+    assert first == second == (GOOD, 'llm')
+    assert len(calls) == 1
+
+
+def test_changed_facts_generate_a_new_explanation():
+    client, calls = _counting_client(GOOD)
+    explain_match_with_source(_result(), client=client)
+    explain_match_with_source(_result(missing_required=['Kubernetes', 'Terraform']), client=client)
+    assert len(calls) == 2
+
+
+def test_scores_alone_do_not_invalidate_the_cache():
+    # The explanation never quotes scores, so a score change must not cost a new call
+    client, calls = _counting_client(GOOD)
+    explain_match_with_source(_result(total_score=0.7), client=client)
+    explain_match_with_source(_result(total_score=0.65, semantic_score=0.5), client=client)
+    assert len(calls) == 1
+
+
+def test_rejected_output_cached_as_template():
+    client, calls = _counting_client('One sentence only, mentioning Kubernetes.')
+    expected = (fallback_explanation(build_facts(_result())), 'template:rejected')
+    assert explain_match_with_source(_result(), client=client) == expected
+    assert explain_match_with_source(_result(), client=client) == expected
+    assert len(calls) == 1
+
+
+def test_llm_error_not_cached_so_next_view_retries():
+    failing, _ = _counting_client(exc=RuntimeError('ollama down'))
+    assert explain_match_with_source(_result(), client=failing)[1] == 'template:error'
+    working, calls = _counting_client(GOOD)
+    assert explain_match_with_source(_result(), client=working) == (GOOD, 'llm')
+    assert len(calls) == 1
+
+
+def test_cache_key_depends_on_model_and_prompt():
+    prompt = render_prompt(build_facts(_result()))
+    assert cache_key('llama3.2', prompt) == cache_key('llama3.2', prompt)
+    assert cache_key('llama3.2', prompt) != cache_key('qwen2.5', prompt)
+    assert cache_key('llama3.2', prompt) != cache_key('llama3.2', prompt + ' ')
+
+
+def test_cache_outage_still_returns_an_explanation(monkeypatch):
+    from django.core.cache import cache
+
+    def down(*a, **kw):
+        raise ConnectionError('redis down')
+
+    monkeypatch.setattr(cache, 'get', down)
+    monkeypatch.setattr(cache, 'set', down)
+    client, calls = _counting_client(GOOD)
+    assert explain_match_with_source(_result(), client=client) == (GOOD, 'llm')
+    assert len(calls) == 1
+
+
+# ── Counts must match the facts ───────────────────────────────────────────
+
+def _no_skills_principal():
+    # Facts of the live failure: 0 of 4 matched, role one level above
+    return _result(title='Principal Data Engineer', job_seniority='principal', profile_seniority='senior',
+                   seniority_gap=-1, matched_required=[],
+                   missing_required=['Airflow', 'Apache Spark', 'SQL', 'Scala'])
+
+
+def test_wrong_counts_from_live_run_rejected():
+    live = ('You are missing five of the six required skills for the Principal Data Engineer role, '
+            'including Airflow, Apache Spark, SQL, and SQL is missing one skill. '
+            'The role is one level above your level as a senior.')
+    assert validate_explanation(live, build_facts(_no_skills_principal())) is None
+
+
+def test_correct_counts_accepted():
+    ok = ('You are missing all four required skills for this Principal Data Engineer role, '
+          'including Airflow, Apache Spark and SQL. The role is one level above your level.')
+    assert validate_explanation(ok, build_facts(_no_skills_principal())) == ok
+
+
+@pytest.mark.parametrize('text', [
+    'You have two of the four required skills, Python and Django. The gap is Kubernetes.',   # 3 matched, not 2
+    'You have 3 of 5 required skills, including Python and Django. The gap is Kubernetes.',  # total is 4
+    'You have three of the four required skills, including Python. Kubernetes and two others are missing.',
+])
+def test_count_not_in_facts_rejected(text):
+    assert validate_explanation(text, build_facts(_result())) is None
+
+
+def test_numbers_in_title_and_skill_names_ignored():
+    r = _result(title='Web3 Engineer II 2', matched_required=['Python 3', 'Django', 'S3'])
+    ok = 'You have three of the four required skills for this Web3 Engineer II 2 role, including Python 3 and S3. The gap is Kubernetes.'
+    assert validate_explanation(ok, build_facts(r)) == ok
+
+
+def test_short_skill_names_do_not_hide_counts():
+    # Removing the skill "R" must not erase letters from "five" or "three"
+    r = _result(matched_required=['R', 'SQL', 'Go'])
+    bad = 'You have five of the four required skills, R, SQL and Go. The gap is Kubernetes.'
+    assert validate_explanation(bad, build_facts(r)) is None
+
+
+def test_cache_key_includes_checks_version():
+    from apps.intelligence.explain import CHECKS_VERSION
+    assert f':checks{CHECKS_VERSION}:' in cache_key('llama3.2', 'prompt')

@@ -426,7 +426,7 @@ pytest --cov=apps --cov-report=term-missing   # with coverage
 
 All tests use a temporary test database and make no real network calls. The test database needs the `pgvector` extension, so run them against the project's Docker Postgres (port 5433 in `.env.example`), not a plain system Postgres.
 
-Current suite: **110 tests, all passing** (`pytest -v`, Python 3.12, PostgreSQL + pgvector 0.6).
+Current suite: **125 tests, all passing** (`pytest -v`, Python 3.12, PostgreSQL + pgvector 0.6).
 
 ## Week 5 — Vector search (CV-to-job matching)
 
@@ -857,6 +857,8 @@ Check each explanation against the `matched` / `missing` / `gap` lines directly 
 
 Before the v2 checks, outputs that passed included "multiple skills are missing: Kubernetes" (one skill), "you are three levels above" a principal role for a junior candidate, and a skill (Redis) copied from the prompt example. Known residual: the checks are pattern-based, so a sentence can still contradict a fact in wording they don't cover (e.g. "you do not have any of the required skills" next to a matched skill).
 
+**Count check (added with the cache).** A live run accepted "You are missing five of the six required skills" for a job where the candidate had 0 of 4. The model had copied the count from the prompt's Head of Nursing example. Every number in the output (digits or words up to twenty) must now be one of the computed counts, and "X of Y" must use the real required total. Numbers inside the job title or skill names ("Web3", "Python 3") are ignored. On the same 3 demo matches, llama3.2 then had 0/3 accepted, and all 3 rejections were correct: a wrong count, a "missing none" gap, and an unstated level difference. The template was shown instead. A low acceptance rate is the honest outcome with a 3B model. The next lever is the prompt itself (e.g. examples whose counts can't be confused with real ones), measured with the live check above.
+
 ### When to generate: on demand vs background
 
 | | On demand (when a user opens a match) | Background (top N after each match run) |
@@ -865,7 +867,16 @@ Before the v2 checks, outputs that passed included "multiple skills are missing:
 | **Latency** | 2–4 s wait on open (local model), ~12 s on a cold model. Hidden by showing the template text instantly and replacing it when the LLM returns. | Zero on open — already computed. |
 | **Complexity** | Low: one call in the request path plus a cache. | Higher: a Celery task per match run, storage, invalidation when facts change, and handling users who open a result before it's ready (still needs the on-demand path as backup). |
 
-**Recommendation: on demand, cached.** Cache by `(profile, job, hash of build_facts(), PROMPT_VERSION)` — the facts fully determine the explanation, so it's regenerated only when something it depends on changes. Show `fallback_explanation()` immediately and swap in the LLM text when it arrives. Add background pre-generation for the top 3 only if usage shows most users open those and the 2–4 s wait is a real complaint. The cache isn't built yet.
+**Recommendation: on demand, cached.** Add background pre-generation for the top 3 only if usage shows most users open those and the 2–4 s wait is a real complaint. A later improvement: show `fallback_explanation()` immediately and swap in the LLM text when it arrives (not built).
+
+### Explanation cache
+
+`explain_match_with_source()` caches each result in the Django cache (Redis) for a week:
+
+- **Key:** `explain:<PROMPT_VERSION>:checks<CHECKS_VERSION>:sha256(model + rendered prompt)`. `CHECKS_VERSION` is bumped whenever `validate_explanation()` changes, so text accepted by older, weaker checks is never served. The rendered prompt contains every fact the explanation may use, so a new explanation is generated only when a fact, the prompt or the model changes. Score changes alone (e.g. new recency or weights) don't trigger a new call, because scores are never sent to the model. Two CVs with identical facts for the same job share one entry. The key contains no CV text.
+- **What is cached:** accepted LLM output (`llm`) and rejected output replaced by the template (`template:rejected`), so the model isn't asked again for the same facts. A failed call (`template:error`) is **not** cached, so the next view retries.
+- **Cache down:** reads and writes are wrapped, so the page still gets an explanation, just without caching.
+- Reopening a match goes from 2–4 s to near-instant, and `match --narrate` on the same results makes no model calls on a second run.
 
 ## Week 5 — Matching evaluation
 
@@ -908,7 +919,7 @@ Full findings in [`docs/matching-evaluation.md`](docs/matching-evaluation.md).
 | **Explanations are faithful** | `test_explanation_describes_the_facts_of_a_real_match` — a real `match_profile()` result passed to a mocked model: the prompt carries exactly its levels, gap and skill lists, and never the job description or CV text; the text returned describes those same facts. Plus `apps/intelligence/tests/test_explain.py`. |
 
 ```bash
-pytest                                              # all 110
+pytest                                              # all 125
 pytest apps/intelligence/tests/test_matching.py apps/intelligence/tests/test_explain.py apps/accounts/tests -v
 ```
 
@@ -950,7 +961,7 @@ End-to-end on a throwaway Postgres + pgvector with the real local model and thre
 
 ### Verification — `pytest -v` and `runserver`
 
-- `pytest -v`: **110 passed, 0 failed.**
+- `pytest -v`: **125 passed, 0 failed.**
 - `python manage.py runserver`, driven over HTTP exactly as a browser would (throwaway Postgres + pgvector, local llama3.2 and nomic-embed-text, three sample jobs):
 
 | Step | Result |

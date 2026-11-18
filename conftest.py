@@ -52,6 +52,15 @@ class RawJobPayloadFactory(factory.django.DjangoModelFactory):
     fetched_at = factory.Faker("date_time_this_year", tzinfo=__import__("datetime").timezone.utc)
 
 
+@pytest.fixture(autouse=True)
+def _isolated_cache(settings):
+    """Every test gets an empty in-memory cache, never the real Redis."""
+    settings.CACHES = {'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+                                   'LOCATION': f'test-{os.urandom(4).hex()}'}}
+    from django.core.cache import cache
+    cache.clear()
+
+
 @pytest.fixture
 def job_factory(db):
     return JobFactory
