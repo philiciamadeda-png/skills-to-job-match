@@ -187,7 +187,7 @@ def test_invented_skills_dropped_before_matching(cv, postgres):
     ('Java', 'JavaScript developer.', False),
 ])
 def test_skills_in_text(skill, text, kept):
-    from apps.accounts.cv_extraction import skills_in_text
+    from apps.intelligence.services import skills_in_text
     assert skills_in_text([skill], text) == (([skill], []) if kept else ([], [skill]))
 
 

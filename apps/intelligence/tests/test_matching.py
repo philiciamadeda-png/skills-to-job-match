@@ -386,7 +386,7 @@ def test_cv_and_job_skill_written_differently_match_end_to_end(db, canonical_ski
     from apps.accounts.models import CV
     from apps.intelligence.tasks import _extract_one
 
-    job = JobFactory(description='Backend role.')
+    job = JobFactory(description='Backend role. You need PostgreSQL, Python and Docker.')
     _extract_one(job, _fake_llm(json.dumps({
         'required_skills': ['PostgreSQL', 'Python', 'Docker'], 'nice_to_have_skills': [],
         'seniority': 'senior', 'years_required': 'not_stated',

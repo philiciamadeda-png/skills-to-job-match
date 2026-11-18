@@ -8,12 +8,11 @@ and CVExtractionResult schema.
 from __future__ import annotations
 
 import logging
-import re
 from pathlib import Path
 
 from apps.intelligence.llm.client import LLMClient, LLMMessage
 from apps.intelligence.schemas import CVExtractionResult
-from apps.intelligence.services import resolve_skill
+from apps.intelligence.services import resolve_skill, skills_in_text
 from apps.intelligence.tasks import EMBED_MODEL, _embed_batch
 
 logger = logging.getLogger(__name__)
@@ -25,28 +24,6 @@ MAX_CV_CHARS = 4000
 
 def _render_cv_prompt(cv_text: str) -> str:
     return _PROMPT_PATH.read_text().replace('{cv_text}', cv_text[:MAX_CV_CHARS])
-
-
-def _normalise(text: str) -> str:
-    return ' '.join(text.lower().split())
-
-
-def skills_in_text(skills: list[str], cv_text: str) -> tuple[list[str], list[str]]:
-    """
-    Split extracted skills into (kept, dropped): a skill is kept only if it
-    appears as a whole word or phrase in the CV text the model was shown.
-    The model has added skills from the prompt's own examples ("Agile",
-    "Scrum") to CVs that never mention them; this stops that reaching matching.
-    """
-    text = _normalise(cv_text[:MAX_CV_CHARS])
-    kept, dropped = [], []
-    for skill in skills:
-        name = _normalise(skill)
-        if name and re.search(rf'(?<!\w){re.escape(name)}(?!\w)', text):
-            kept.append(skill)
-        else:
-            dropped.append(skill)
-    return kept, dropped
 
 
 def extract_cv_profile(cv) -> bool:
@@ -77,7 +54,7 @@ def extract_cv_profile(cv) -> bool:
 
     result = sr.result
 
-    skills, invented = skills_in_text(result.skills, cv.extracted_text)
+    skills, invented = skills_in_text(result.skills, cv.extracted_text[:MAX_CV_CHARS])
     if invented:
         logger.warning('extract_cv_profile: cv=%s dropped %d skill(s) not in the CV text: %s',
                        cv.pk, len(invented), invented)

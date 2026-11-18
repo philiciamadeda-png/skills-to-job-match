@@ -426,7 +426,7 @@ pytest --cov=apps --cov-report=term-missing   # with coverage
 
 All tests use a temporary test database and make no real network calls. The test database needs the `pgvector` extension, so run them against the project's Docker Postgres (port 5433 in `.env.example`), not a plain system Postgres.
 
-Current suite: **135 tests, all passing** (`pytest -v`, Python 3.12, PostgreSQL + pgvector 0.6).
+Current suite: **136 tests, all passing** (`pytest -v`, Python 3.12, PostgreSQL + pgvector 0.6).
 
 ## Week 5 — Vector search (CV-to-job matching)
 
@@ -636,6 +636,8 @@ With v1 of the prompt, llama3.2 added "Agile" and "Scrum" to every tech CV in th
 - **`skills_in_text()`** drops any returned skill that doesn't appear as a whole word or phrase in the CV text the model was shown (case- and whitespace-insensitive), and logs what it dropped. The prompt asks; the code enforces.
 
 Re-run on the 4 evaluation CVs: Agile/Scrum gone from all of them, every real skill kept, and one more invented name caught ("Postgres" on CVs that only say "PostgreSQL"). Trade-off: a skill the model rewords (e.g. "Postgres" for a CV that says "PostgreSQL") is dropped rather than kept. That's safe here because the model also returns the wording that is in the text, and the warning in the log shows anything dropped.
+
+**The same bug in job extraction.** Loading 250 real jobs for the Task 7 evaluation showed 13 unrelated jobs (a Senior Product Manager, an Intelligence Officer, a Director of Enterprise Planning…) all requiring exactly Python, Django and PostgreSQL with Redis as a bonus, which is the worked example in `extract_job_details.md`. None of those adverts mention Django, PostgreSQL or Redis, and they filled most of the top 10 for three of the four evaluation CVs. `skills_in_text()` now lives in `apps/intelligence/services.py` next to `resolve_skill()`, and `_extract_one()` applies it to the description the model saw. Checking the 246 already-extracted jobs found invented skills on 90 of them (227 links, led by PostgreSQL ×24, Redis ×24, Python ×15, Django ×15). Those links were removed and the jobs re-embedded.
 
 ### Seniority vocabulary
 
@@ -928,7 +930,7 @@ Full findings in [`docs/matching-evaluation.md`](docs/matching-evaluation.md).
 | **Explanations are faithful** | `test_explanation_describes_the_facts_of_a_real_match` — a real `match_profile()` result passed to a mocked model: the prompt carries exactly its levels, gap and skill lists, and never the job description or CV text; the text returned describes those same facts. Plus `apps/intelligence/tests/test_explain.py`. |
 
 ```bash
-pytest                                              # all 135
+pytest                                              # all 136
 pytest apps/intelligence/tests/test_matching.py apps/intelligence/tests/test_explain.py apps/accounts/tests -v
 ```
 
@@ -970,7 +972,7 @@ End-to-end on a throwaway Postgres + pgvector with the real local model and thre
 
 ### Verification — `pytest -v` and `runserver`
 
-- `pytest -v`: **135 passed, 0 failed.**
+- `pytest -v`: **136 passed, 0 failed.**
 - `python manage.py runserver`, driven over HTTP exactly as a browser would (throwaway Postgres + pgvector, local llama3.2 and nomic-embed-text, three sample jobs):
 
 | Step | Result |
