@@ -157,6 +157,19 @@ def test_cv_with_no_readable_text_clear_message(logged_in, jobs):
     assert not CV.objects.exists()
 
 
+@pytest.mark.parametrize('name,data', [
+    ('cv.docx', b'PK\x03\x04' + b'not really a zip' * 50),   # Word signature, broken inside
+    ('cv.pdf', b'%PDF-1.4\n' + b'not really a pdf' * 50),    # PDF signature, broken inside
+])
+def test_corrupt_file_clear_message_no_crash(logged_in, jobs, name, data):
+    resp = _upload(logged_in, SimpleUploadedFile(name, data), GOOD_PROFILE)
+    assert resp.status_code == 200
+    page = resp.content.decode()
+    assert 'corrupt' in page.lower()
+    assert 'Backend Engineer' not in page            # no matches shown
+    assert not CVProfile.objects.exists()
+
+
 def test_cv_with_no_recognised_skills_shows_no_matches(logged_in, jobs):
     resp = _upload(logged_in, _docx('Lorem ipsum dolor sit amet, ' * 5),
                    {'skills': [], 'seniority': 'not_stated', 'years_experience': 'not_stated'})
