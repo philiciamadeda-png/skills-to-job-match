@@ -196,3 +196,36 @@ def test_prompt_has_no_skill_examples_to_copy():
     prompt = _render_cv_prompt('CV TEXT')
     assert 'Agile' not in prompt and 'Scrum' not in prompt
     assert prompt.rstrip().endswith('CV TEXT')
+
+
+# ── No CV content in logs ─────────────────────────────────────────────────
+
+SECRET = 'Jane Doe, jane@example.com'
+
+
+def test_failed_extraction_logs_no_cv_content(cv, postgres, caplog):
+    """Invalid output that echoes the CV, and a validation error quoting it, stay out of the log."""
+    echo = json.dumps({'skills': ['Python'], 'seniority': SECRET, 'years_experience': 7})
+    ok, _ = _run(cv, echo)
+
+    assert ok is False
+    assert 'LLM failed' in caplog.text
+    assert 'Jane Doe' not in caplog.text and 'jane@example.com' not in caplog.text
+
+
+def test_unresolvable_skill_logs_no_cv_content(cv, postgres, caplog):
+    cv.extracted_text += f' Contact: {SECRET}.'
+    cv.save()
+    with patch('apps.accounts.cv_extraction.resolve_skill', side_effect=ValueError(f'bad skill {SECRET}')):
+        _run(cv, {'skills': [SECRET], 'seniority': 'senior', 'years_experience': 7})
+
+    assert 'skill resolve failed' in caplog.text
+    assert 'Jane Doe' not in caplog.text and 'jane@example.com' not in caplog.text
+
+
+def test_job_extraction_still_logs_raw_output_for_debugging(caplog):
+    """Job adverts aren't personal data: their failures keep the raw output in the log."""
+    from apps.intelligence.schemas import CVExtractionResult
+    client = _fake_client('not json at all, from a job advert')
+    client.extract_structured([], CVExtractionResult)
+    assert 'not json at all' in caplog.text
