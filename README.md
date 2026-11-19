@@ -891,30 +891,30 @@ Before the v2 checks, outputs that passed included "multiple skills are missing:
 
 ## Week 5 — Matching evaluation
 
-Full findings in [`docs/matching-evaluation.md`](docs/matching-evaluation.md).
+Full findings, every rating and the earlier round in [`docs/matching-evaluation.md`](docs/matching-evaluation.md).
 
-### Method
+### Evaluation 2 (current): 4 CVs × top 10 on real jobs
 
-4 CVs × top-5 results = 20 judgements rated good / plausible / wrong.
+Four CVs (mine as a junior Business IT student, plus a senior backend engineer, a mid data analyst and a senior marketing manager) were matched against 110 eligible real jobs (Remotive + Arbeitnow, extracted with llama3.2). Each top-10 result was rated good / plausible / clearly wrong.
 
-| CV | Profile | Wrong before | Wrong after |
-|---|---|---|---|
-| CV1 | Senior Python Engineer, 7yr | 0/5 | 0/5 |
-| CV2 | Junior Python Developer, 1yr | 4/5 | 3/5 |
-| CV3 | Marketing Manager, 8yr | 5/5 | 5/5 |
-| CV4 | Senior Rails Engineer, 9yr | 0/5 | 0/5 |
-| **Total** | | **9/20 (45%)** | **8/20 (40%)** |
+**Two extraction bugs had to be fixed before the results could be rated.** Both prompts' worked examples were being copied into the output: Python/Django/PostgreSQL + Redis onto 13 unrelated jobs (90 of 246 jobs had at least one invented skill), and Agile/Scrum onto every tech CV. `skills_in_text()` now drops any extracted skill that isn't in the text.
 
-### Fixes applied
+| CV | Clearly wrong in top 5 (weights 0.40 / 0.30 / 0.15 / 0.10 / 0.05) | With required_skill = 0.50 |
+|---|---|---|
+| Me, junior student | 1/5 | 2/5 |
+| Senior backend engineer | 0/5 | 0/5 |
+| Data analyst | 0/5 | 0/5 |
+| Marketing manager | 0/5 | 0/5 |
+| **Total** | **1/20 (5%)** | **2/20 (10%): worse, reverted** |
 
-1. `MIN_JOB_SKILLS = 3` — jobs with fewer than 3 extracted skills excluded before scoring. Eliminates zero-skill noise jobs (Freelance Writer, Inside Sales Contractor) that inflated `req_score` from a single generic match.
+The ratings for the data analyst and marketing manager are lenient (software roles rated good), so 5% is a lower bound.
 
-2. Rebalanced weights: semantic 0.25→0.15, seniority 0.20→0.30. Seniority mismatch now costs more; semantic score no longer masks a 2-level gap.
-
-### Remaining failures
-
-- CV2/CV3 still surface wrong results because the dataset has no junior or non-tech jobs — the algorithm correctly penalises mismatches (scores 0.24–0.40) but has nothing better to show.
-- Proficiency level not modelled — beginner Python counts the same as 7 years of Python.
+**Found and not fixed yet:**
+- Jobs listing **no required skills get a free 0.5** coverage and reach the top 5 for 3 of 4 CVs.
+- **No language filter:** 7 jobs need French or German.
+- A **company name extracted as a skill** ("Docker" on a sales job at Docker).
+- **Common skills** (Python) pull in unrelated senior roles.
+- Student projects counted as **years of experience**.
 
 ## Week 5 — Tests and the page (Task 9)
 
