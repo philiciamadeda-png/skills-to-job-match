@@ -71,9 +71,9 @@ def extract_text(file_obj) -> ExtractionResult:
             text = _extract_pdf(data)
         else:
             text = _extract_docx(data)
-    except Exception:
-        # Log the exception class only — never the content
-        logger.exception('cv_extract: extraction raised an exception (mime=%s)', mime)
+    except Exception as exc:
+        # Log the exception class only: parser messages and tracebacks can quote bytes from the file
+        logger.error('cv_extract: extraction raised %s (mime=%s)', type(exc).__name__, mime)
         return ExtractionResult(text='', mime_type=mime, error='Text extraction failed. The file may be corrupt.')
 
     if len(text.strip()) < MIN_TEXT_LENGTH:

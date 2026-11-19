@@ -196,6 +196,20 @@ def test_scanned_pdf_flagged_not_crashed():
     assert 'scanned' in result.error.lower()
 
 
+def test_corrupt_file_log_has_no_file_content(caplog):
+    """A parser error can quote the file; only the exception class may reach the log."""
+    secret = 'Jane Doe jane@example.com +254700000000'
+    data = b'PK\x03\x04' + secret.encode() * 20
+
+    with patch('apps.accounts.extraction._extract_docx', side_effect=ValueError(f'bad part: {secret}')):
+        result = extract_text(io.BytesIO(data))
+
+    assert not result.ok and 'corrupt' in result.error
+    assert 'ValueError' in caplog.text
+    assert 'Jane Doe' not in caplog.text and 'jane@example.com' not in caplog.text
+    assert 'Traceback' not in caplog.text
+
+
 def test_unsupported_type_rejected():
     result = extract_text(io.BytesIO(b'\x89PNG\r\n' + b'x' * 100))
     assert not result.ok

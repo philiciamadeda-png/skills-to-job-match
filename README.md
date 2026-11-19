@@ -43,7 +43,7 @@ apps/
                   # transform service, LLM extraction + embedding tasks, utils
     llm/
       client.py   # LLMClient — network retries, structured output with one self-correction retry
-    prompts/      # Versioned prompt templates — job extraction (v1–v3), CV extraction, match explanation
+    prompts/      # Versioned prompt templates — job extraction (v1–v3), CV extraction (v1–v2), match explanation (v1–v2)
     schemas.py    # Pydantic schemas: JobExtractionResult, CVExtractionResult
     matching.py   # Hard filters + composite score, MatchResult with per-component breakdown
     explain.py    # Facts-only match explanation with output checks and template fallback
@@ -426,7 +426,7 @@ pytest --cov=apps --cov-report=term-missing   # with coverage
 
 All tests use a temporary test database and make no real network calls. The test database needs the `pgvector` extension, so run them against the project's Docker Postgres (port 5433 in `.env.example`), not a plain system Postgres.
 
-Current suite: **138 tests, all passing** (`pytest -v`, Python 3.12, PostgreSQL + pgvector 0.6).
+Current suite: **139 tests, all passing** (`pytest -v`, Python 3.12, PostgreSQL + pgvector 0.6).
 
 ## Week 5 — Vector search (CV-to-job matching)
 
@@ -591,8 +591,9 @@ After extraction, if `len(text.strip()) < 50` the result is flagged `is_scanned=
 ### Privacy
 
 - `CV.__str__` never includes filename or text content — safe in logs and admin
-- `logger.exception` in the extraction service logs the exception class only, never file contents
-- `CV.delete_file()` removes the stored file once text has been processed — call it after a successful extraction
+- When extraction fails, only the exception class is logged (`logger.error`, no traceback): parser messages can quote bytes from the file
+- The upload page never stores the file, only the extracted text. `CV.delete_file()` removes a stored file for any other caller
+- What is kept and for how long: [`docs/matching-design.md`](docs/matching-design.md#5-personal-data)
 
 ### Usage
 
@@ -709,7 +710,7 @@ Vector similarity alone is not used — nearest-neighbour search has no notion o
 | `nice_to_have_score` | 0.10 | 0.10 | Matched nice-to-have ÷ job's nice-to-have skills (0 if none) |
 | `recency_score` | 0.05 | 0.05 | `exp(−age_days / 30)` from `published_date`; 0 after 180 days, 0.5 if no date |
 
-The weights were tuned from the proposal after the matching evaluation (see below): semantic similarity was over-rewarding boilerplate-heavy descriptions, and a 2-level seniority gap was being masked.
+The weights were tuned from the proposal after the matching evaluation (see below): semantic similarity was over-rewarding boilerplate-heavy descriptions, and a 2-level seniority gap was being masked. Evaluation 2 tried `required_skill` 0.50; it doubled the clearly wrong results in the top 5 (1 → 2 of 20), so 0.40 stays.
 
 Seniority penalises in both directions — `score = 1 − 0.4 × |gap|`, so a gap of 1 level gives 0.6, 2 gives 0.2, ≥ 3 gives 0. A graduate shown a principal role and a senior shown an internship both score low. If either side is `not_stated` the score is a neutral 0.5.
 
@@ -739,6 +740,7 @@ Applied in the database before scoring — these are requirements, not preferenc
 | enough skills | at least `MIN_JOB_SKILLS = 3` extracted skills |
 | `remote_only=True` | excludes `on_site` and `hybrid`; keeps `remote` and unstated |
 | `countries=['KE', ...]` | job location country must be in the list; jobs with no stated country (worldwide) are kept |
+| profile has skills | a CV with no recognised skills gets no matches, rather than a list ranked on similarity alone |
 
 Filtering, skill counting and skill loading all happen in one query plus one prefetch — there is no per-job database query.
 
@@ -930,7 +932,7 @@ The ratings for the data analyst and marketing manager are lenient (software rol
 | **Explanations are faithful** | `test_explanation_describes_the_facts_of_a_real_match` — a real `match_profile()` result passed to a mocked model: the prompt carries exactly its levels, gap and skill lists, and never the job description or CV text; the text returned describes those same facts. Plus `apps/intelligence/tests/test_explain.py`. |
 
 ```bash
-pytest                                              # all 138
+pytest                                              # all 139
 pytest apps/intelligence/tests/test_matching.py apps/intelligence/tests/test_explain.py apps/accounts/tests -v
 ```
 
@@ -972,7 +974,7 @@ End-to-end on a throwaway Postgres + pgvector with the real local model and thre
 
 ### Verification — `pytest -v` and `runserver`
 
-- `pytest -v`: **138 passed, 0 failed.**
+- `pytest -v`: **139 passed, 0 failed.**
 - `python manage.py runserver`, driven over HTTP exactly as a browser would (throwaway Postgres + pgvector, local llama3.2 and nomic-embed-text, three sample jobs):
 
 | Step | Result |
