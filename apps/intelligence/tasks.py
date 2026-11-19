@@ -16,7 +16,7 @@ from apps.intelligence.models import (
     EmbeddingRun, embedding_run,
 )
 from apps.intelligence.prompts import render_extraction_prompt
-from apps.intelligence.services import resolve_skill
+from apps.intelligence.services import resolve_skill, skills_in_text
 
 logger = logging.getLogger(__name__)
 
@@ -52,9 +52,16 @@ def _extract_one(job: Job, client: LLMClient) -> dict:
 
     result = sr.result
 
+    # Keep only skills that appear in the text the model was shown
+    required, invented_req = skills_in_text(result.required_skills, desc)
+    nice, invented_nice = skills_in_text(result.nice_to_have_skills, desc)
+    if invented_req or invented_nice:
+        logger.warning('extract: job=%s dropped skill(s) not in the description: %s',
+                       job.pk, invented_req + invented_nice)
+
     # Persist skills — nice-to-have first so a skill listed in both ends up required
     now = timezone.now()
-    tagged = [(s, False) for s in result.nice_to_have_skills] + [(s, True) for s in result.required_skills]
+    tagged = [(s, False) for s in nice] + [(s, True) for s in required]
     for raw_skill, is_required in tagged:
         try:
             skill = resolve_skill(raw_skill)

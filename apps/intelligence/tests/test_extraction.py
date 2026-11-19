@@ -174,3 +174,23 @@ def test_skill_in_both_lists_is_required(job_factory):
 
     js = JobSkill.objects.get(job=job)
     assert js.is_required is True
+
+
+# ---------------------------------------------------------------------------
+# Skills the description never mentions are dropped
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+def test_skills_copied_from_prompt_example_dropped(job_factory):
+    """The model returned the prompt example's Python/Django/PostgreSQL + Redis for unrelated jobs."""
+    response = (
+        '{"required_skills": ["Python", "Django", "PostgreSQL", "Salesforce"], '
+        '"nice_to_have_skills": ["Redis"], '
+        '"seniority": "senior", "years_required": "not_stated", '
+        '"remote_status": "remote", "contract_type": "full_time"}'
+    )
+    job = job_factory(description="<p>Senior Product Manager. You will own the roadmap and work in Salesforce.</p>")
+    stats = _extract_one(job, _fake_client(response))
+
+    assert stats['succeeded'] == 1
+    assert set(JobSkill.objects.filter(job=job).values_list('skill__name', flat=True)) == {'Salesforce'}

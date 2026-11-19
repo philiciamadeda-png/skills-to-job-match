@@ -426,7 +426,7 @@ pytest --cov=apps --cov-report=term-missing   # with coverage
 
 All tests use a temporary test database and make no real network calls. The test database needs the `pgvector` extension, so run them against the project's Docker Postgres (port 5433 in `.env.example`), not a plain system Postgres.
 
-Current suite: **125 tests, all passing** (`pytest -v`, Python 3.12, PostgreSQL + pgvector 0.6).
+Current suite: **136 tests, all passing** (`pytest -v`, Python 3.12, PostgreSQL + pgvector 0.6).
 
 ## Week 5 — Vector search (CV-to-job matching)
 
@@ -615,7 +615,7 @@ else:
 ### What was built
 
 - `apps/intelligence/schemas.py` — `CVExtractionResult` schema (skills, seniority, years_experience)
-- `apps/intelligence/prompts/extract_cv_v1.md` — CV extraction prompt
+- `apps/intelligence/prompts/extract_cv_v2.md` — CV extraction prompt (v1 kept for comparison)
 - `apps/accounts/models.py` — `CVProfile` model: resolved skills (M2M to canonical `Skill`), seniority, years_experience, embedding
 - `apps/accounts/cv_extraction.py` — `extract_cv_profile()` service
 - `apps/accounts/services.py` — `build_profile(cv_id)` public entry point (loads the CV, runs extraction, returns the `CVProfile`; raises `ProfileBuildError` on failure)
@@ -627,6 +627,17 @@ else:
 Nothing new was written for the LLM call, retries, or validation — `LLMClient` and `extract_structured()` are reused directly. `resolve_skill()` is called for every skill the LLM returns, exactly as the job extraction pipeline does. The embedding call reuses `_embed_batch()` and `EMBED_MODEL` from `apps/intelligence/tasks.py`, so CVs and jobs are always embedded by the same model and endpoint — changing the model in one place changes it for both. The only genuinely new code is the CV prompt and `CVExtractionResult` schema.
 
 Cost: `LLMClient` holds the cost table, but `extract_structured()` does not return token counts, so per-CV cost is not recorded yet. This is the same known gap as job extraction (see `_extract_one()` in `tasks.py`); with the local Ollama model the cost is 0.
+
+### Invented skills are dropped
+
+With v1 of the prompt, llama3.2 added "Agile" and "Scrum" to every tech CV in the evaluation set, although none of them mention either. The words came from the prompt's own example ("domain-specific (e.g. "Agile", "Scrum")"). Common skills like these inflate required-skill coverage for every tech job. Two fixes:
+
+- **Prompt v2** has no skill names in its rules, and says each skill must appear word for word in the CV.
+- **`skills_in_text()`** drops any returned skill that doesn't appear as a whole word or phrase in the CV text the model was shown (case- and whitespace-insensitive), and logs what it dropped. The prompt asks; the code enforces.
+
+Re-run on the 4 evaluation CVs: Agile/Scrum gone from all of them, every real skill kept, and one more invented name caught ("Postgres" on CVs that only say "PostgreSQL"). Trade-off: a skill the model rewords (e.g. "Postgres" for a CV that says "PostgreSQL") is dropped rather than kept. That's safe here because the model also returns the wording that is in the text, and the warning in the log shows anything dropped.
+
+**The same bug in job extraction.** Loading 250 real jobs for the Task 7 evaluation showed 13 unrelated jobs (a Senior Product Manager, an Intelligence Officer, a Director of Enterprise Planning…) all requiring exactly Python, Django and PostgreSQL with Redis as a bonus, which is the worked example in `extract_job_details.md`. None of those adverts mention Django, PostgreSQL or Redis, and they filled most of the top 10 for three of the four evaluation CVs. `skills_in_text()` now lives in `apps/intelligence/services.py` next to `resolve_skill()`, and `_extract_one()` applies it to the description the model saw. Checking the 246 already-extracted jobs found invented skills on 90 of them (227 links, led by PostgreSQL ×24, Redis ×24, Python ×15, Django ×15). Those links were removed and the jobs re-embedded.
 
 ### Seniority vocabulary
 
@@ -880,30 +891,30 @@ Before the v2 checks, outputs that passed included "multiple skills are missing:
 
 ## Week 5 — Matching evaluation
 
-Full findings in [`docs/matching-evaluation.md`](docs/matching-evaluation.md).
+Full findings, every rating and the earlier round in [`docs/matching-evaluation.md`](docs/matching-evaluation.md).
 
-### Method
+### Evaluation 2 (current): 4 CVs × top 10 on real jobs
 
-4 CVs × top-5 results = 20 judgements rated good / plausible / wrong.
+Four CVs (mine as a junior Business IT student, plus a senior backend engineer, a mid data analyst and a senior marketing manager) were matched against 110 eligible real jobs (Remotive + Arbeitnow, extracted with llama3.2). Each top-10 result was rated good / plausible / clearly wrong.
 
-| CV | Profile | Wrong before | Wrong after |
-|---|---|---|---|
-| CV1 | Senior Python Engineer, 7yr | 0/5 | 0/5 |
-| CV2 | Junior Python Developer, 1yr | 4/5 | 3/5 |
-| CV3 | Marketing Manager, 8yr | 5/5 | 5/5 |
-| CV4 | Senior Rails Engineer, 9yr | 0/5 | 0/5 |
-| **Total** | | **9/20 (45%)** | **8/20 (40%)** |
+**Two extraction bugs had to be fixed before the results could be rated.** Both prompts' worked examples were being copied into the output: Python/Django/PostgreSQL + Redis onto 13 unrelated jobs (90 of 246 jobs had at least one invented skill), and Agile/Scrum onto every tech CV. `skills_in_text()` now drops any extracted skill that isn't in the text.
 
-### Fixes applied
+| CV | Clearly wrong in top 5 (weights 0.40 / 0.30 / 0.15 / 0.10 / 0.05) | With required_skill = 0.50 |
+|---|---|---|
+| Me, junior student | 1/5 | 2/5 |
+| Senior backend engineer | 0/5 | 0/5 |
+| Data analyst | 0/5 | 0/5 |
+| Marketing manager | 0/5 | 0/5 |
+| **Total** | **1/20 (5%)** | **2/20 (10%): worse, reverted** |
 
-1. `MIN_JOB_SKILLS = 3` — jobs with fewer than 3 extracted skills excluded before scoring. Eliminates zero-skill noise jobs (Freelance Writer, Inside Sales Contractor) that inflated `req_score` from a single generic match.
+The ratings for the data analyst and marketing manager are lenient (software roles rated good), so 5% is a lower bound.
 
-2. Rebalanced weights: semantic 0.25→0.15, seniority 0.20→0.30. Seniority mismatch now costs more; semantic score no longer masks a 2-level gap.
-
-### Remaining failures
-
-- CV2/CV3 still surface wrong results because the dataset has no junior or non-tech jobs — the algorithm correctly penalises mismatches (scores 0.24–0.40) but has nothing better to show.
-- Proficiency level not modelled — beginner Python counts the same as 7 years of Python.
+**Found and not fixed yet:**
+- Jobs listing **no required skills get a free 0.5** coverage and reach the top 5 for 3 of 4 CVs.
+- **No language filter:** 7 jobs need French or German.
+- A **company name extracted as a skill** ("Docker" on a sales job at Docker).
+- **Common skills** (Python) pull in unrelated senior roles.
+- Student projects counted as **years of experience**.
 
 ## Week 5 — Tests and the page (Task 9)
 
@@ -919,7 +930,7 @@ Full findings in [`docs/matching-evaluation.md`](docs/matching-evaluation.md).
 | **Explanations are faithful** | `test_explanation_describes_the_facts_of_a_real_match` — a real `match_profile()` result passed to a mocked model: the prompt carries exactly its levels, gap and skill lists, and never the job description or CV text; the text returned describes those same facts. Plus `apps/intelligence/tests/test_explain.py`. |
 
 ```bash
-pytest                                              # all 125
+pytest                                              # all 136
 pytest apps/intelligence/tests/test_matching.py apps/intelligence/tests/test_explain.py apps/accounts/tests -v
 ```
 
@@ -961,7 +972,7 @@ End-to-end on a throwaway Postgres + pgvector with the real local model and thre
 
 ### Verification — `pytest -v` and `runserver`
 
-- `pytest -v`: **125 passed, 0 failed.**
+- `pytest -v`: **136 passed, 0 failed.**
 - `python manage.py runserver`, driven over HTTP exactly as a browser would (throwaway Postgres + pgvector, local llama3.2 and nomic-embed-text, three sample jobs):
 
 | Step | Result |

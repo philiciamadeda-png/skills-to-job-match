@@ -12,16 +12,18 @@ from pathlib import Path
 
 from apps.intelligence.llm.client import LLMClient, LLMMessage
 from apps.intelligence.schemas import CVExtractionResult
-from apps.intelligence.services import resolve_skill
+from apps.intelligence.services import resolve_skill, skills_in_text
 from apps.intelligence.tasks import EMBED_MODEL, _embed_batch
 
 logger = logging.getLogger(__name__)
 
-_PROMPT_PATH = Path(__file__).parent.parent / 'intelligence' / 'prompts' / 'extract_cv_v1.md'
+PROMPT_VERSION = 'extract_cv_v2'
+_PROMPT_PATH = Path(__file__).parent.parent / 'intelligence' / 'prompts' / f'{PROMPT_VERSION}.md'
+MAX_CV_CHARS = 4000
 
 
 def _render_cv_prompt(cv_text: str) -> str:
-    return _PROMPT_PATH.read_text().replace('{cv_text}', cv_text[:4000])
+    return _PROMPT_PATH.read_text().replace('{cv_text}', cv_text[:MAX_CV_CHARS])
 
 
 def extract_cv_profile(cv) -> bool:
@@ -52,9 +54,14 @@ def extract_cv_profile(cv) -> bool:
 
     result = sr.result
 
+    skills, invented = skills_in_text(result.skills, cv.extracted_text[:MAX_CV_CHARS])
+    if invented:
+        logger.warning('extract_cv_profile: cv=%s dropped %d skill(s) not in the CV text: %s',
+                       cv.pk, len(invented), invented)
+
     # Resolve skills through the same canonical table jobs use
     resolved_skills = []
-    for raw in result.skills:
+    for raw in skills:
         try:
             resolved_skills.append(resolve_skill(raw))
         except Exception as exc:

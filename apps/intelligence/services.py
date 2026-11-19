@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import date
 
 from apps.ingestion.models import RawJobPayload
@@ -6,6 +7,30 @@ from apps.intelligence.models import Company, Job, Location, Skill, SkillAlias
 from apps.intelligence.utils import normalize_company, normalize_location, normalize_skill, normalize_title
 
 logger = logging.getLogger(__name__)
+
+
+def _normalise_text(text: str) -> str:
+    return ' '.join(text.lower().split())
+
+
+def skills_in_text(skills: list[str], text: str) -> tuple[list[str], list[str]]:
+    """
+    Split LLM-extracted skills into (kept, dropped): a skill is kept only if it
+    appears as a whole word or phrase in the text the model was shown.
+
+    Used for both CVs and job descriptions. The model has copied skills from
+    its prompt's examples ("Agile", "Scrum" on CVs; "Python, Django,
+    PostgreSQL" + "Redis" on unrelated jobs) into texts that never mention them.
+    """
+    normalised = _normalise_text(text)
+    kept, dropped = [], []
+    for skill in skills:
+        name = _normalise_text(skill)
+        if name and re.search(rf'(?<!\w){re.escape(name)}(?!\w)', normalised):
+            kept.append(skill)
+        else:
+            dropped.append(skill)
+    return kept, dropped
 
 
 def resolve_skill(raw: str) -> Skill:
