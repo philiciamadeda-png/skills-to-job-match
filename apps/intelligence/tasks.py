@@ -293,10 +293,11 @@ def task_embed_jobs(self, batch_size: int = EMBED_BATCH_SIZE, limit: int | None 
                         job.embedding = vec
                         job.embedding_model = EMBED_MODEL
                         job.embedding_hash = hashlib.sha256(text.encode()).hexdigest()
+                        job.embedded_at = now
 
                     Job.objects.bulk_update(
                         stale,
-                        ['embedding', 'embedding_model', 'embedding_hash'],
+                        ['embedding', 'embedding_model', 'embedding_hash', 'embedded_at'],
                         batch_size=batch_size,
                     )
                     run.succeeded += len(stale)

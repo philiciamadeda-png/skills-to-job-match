@@ -46,10 +46,11 @@ def extract_cv_profile(cv) -> bool:
         LLMMessage(role='user', content=_render_cv_prompt(cv.extracted_text)),
     ]
 
-    sr = client.extract_structured(messages, CVExtractionResult)
+    sr = client.extract_structured(messages, CVExtractionResult, log_raw=False)
 
     if sr.result is None:
-        logger.error('extract_cv_profile: cv=%s LLM failed — %s', cv.pk, sr.failure_reason)
+        # failure_reason can quote values from the CV, so only the kind of failure is logged
+        logger.error('extract_cv_profile: cv=%s LLM failed — %s', cv.pk, (sr.failure_reason or 'unknown').split(':')[0])
         return False
 
     result = sr.result
@@ -65,7 +66,7 @@ def extract_cv_profile(cv) -> bool:
         try:
             resolved_skills.append(resolve_skill(raw))
         except Exception as exc:
-            logger.warning('extract_cv_profile: cv=%s skill resolve failed %r — %s', cv.pk, raw, exc)
+            logger.warning('extract_cv_profile: cv=%s skill resolve failed — %s', cv.pk, type(exc).__name__)
 
     # Build or update CVProfile
     profile, _ = CVProfile.objects.get_or_create(cv=cv)

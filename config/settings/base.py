@@ -108,6 +108,17 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'apps.ingestion.tasks.task_transform_jobs',
         'schedule': 7200 + 1800,  # 30 min after ingest window
     },
+    # Both only touch what's new (extraction: pending jobs; embedding: jobs whose
+    # text hash or model changed) and hold a lock, so a run that starts before the
+    # previous stage finishes picks the rest up next time.
+    'extract-jobs-daily': {
+        'task': 'apps.intelligence.tasks.task_extract_jobs',
+        'schedule': 7200 + 3600,  # after transform
+    },
+    'embed-jobs-daily': {
+        'task': 'apps.intelligence.tasks.task_embed_jobs',
+        'schedule': 7200 + 5400,  # after extraction
+    },
 }
 
 # Cache — Redis, used for distributed locks

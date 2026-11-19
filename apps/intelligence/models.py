@@ -93,6 +93,10 @@ class Job(TimestampedModel):
         max_length=64, blank=True, db_index=True,
         help_text='SHA-256 of the text fed to the embedder. Stale when this differs from current embed_text().',
     )
+    embedded_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text='When the current embedding was written.',
+    )
     extraction_status = models.CharField(
         max_length=20,
         choices=ExtractionStatus.choices,

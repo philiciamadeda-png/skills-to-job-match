@@ -111,11 +111,16 @@ class LLMClient:
         self,
         messages: List[LLMMessage],
         schema: Type[T],
+        *,
+        log_raw: bool = True,
     ) -> StructuredResponse[T]:
         """
         Call the model, extract JSON from the response, validate against
         `schema` (a Pydantic model), and on failure retry exactly once with
         the validation error fed back to the model.
+
+        log_raw=False keeps the model's output and the validation error (which
+        quotes input values) out of the log — for personal data such as CVs.
 
         Never raises. Returns StructuredResponse with result=None on permanent
         failure so callers can record and continue.
@@ -143,7 +148,10 @@ class LLMClient:
         if result is not None:
             return StructuredResponse(result=result, raw=retry_resp.content, retried=True, failure_reason=None)
 
-        logger.warning("extract_structured: permanent failure after retry. error=%s raw=%r", error, retry_resp.content[:200])
+        if log_raw:
+            logger.warning("extract_structured: permanent failure after retry. error=%s raw=%r", error, retry_resp.content[:200])
+        else:
+            logger.warning("extract_structured: permanent failure after retry (output not logged)")
         return StructuredResponse(result=None, raw=retry_resp.content, retried=True, failure_reason=error)
 
     @staticmethod

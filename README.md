@@ -197,7 +197,7 @@ celery -A config beat -l info
 python manage.py runserver
 ```
 
-Beat dispatches `task_ingest_jobs` every 2 hours, `task_transform_jobs` 30 minutes later, with run records appearing at `/admin/ingestion/ingestionrun/` and `/admin/intelligence/extractionrun/`.
+Beat dispatches `task_ingest_jobs` every 2 hours, `task_transform_jobs` 30 minutes later, `task_extract_jobs` after that and `task_embed_jobs` last, with run records appearing at `/admin/ingestion/ingestionrun/`, `/admin/intelligence/extractionrun/` and `/admin/intelligence/embeddingrun/`. Extraction only takes pending jobs and embedding only takes jobs whose text or model changed, and each holds a Redis lock, so a stage that starts before the previous one has finished just picks up the rest on its next run.
 
 ## Maintaining the skill vocabulary
 
@@ -426,7 +426,7 @@ pytest --cov=apps --cov-report=term-missing   # with coverage
 
 All tests use a temporary test database and make no real network calls. The test database needs the `pgvector` extension, so run them against the project's Docker Postgres (port 5433 in `.env.example`), not a plain system Postgres.
 
-Current suite: **139 tests, all passing** (`pytest -v`, Python 3.12, PostgreSQL + pgvector 0.6).
+Current suite: **150 tests, all passing** (`pytest -v`, Python 3.12, PostgreSQL + pgvector 0.6).
 
 ## Week 5 — Vector search (CV-to-job matching)
 
@@ -536,6 +536,8 @@ print(r.status, r.model, r.succeeded, r.failed, r.duration)
 2. `embedding_model` matches the configured model
 3. `embedding_hash` matches `SHA-256(embed_text())` — the hash of the exact text fed to the embedder
 
+Each embedded job records `embedding_model` and `embedded_at`; each run records its model, start and finish time and counts in `EmbeddingRun`. The task runs on the beat schedule after extraction (see "Running the scheduled pipeline"). Tests: `apps/intelligence/tests/test_embedding.py`.
+
 Only the third condition catches content changes. The hash is computed from `embed_text()` (title + seniority + skills + first 400 chars of description). Unrelated field changes — salary, contract type, source metadata — do not affect `embed_text()` and therefore do not trigger a re-embed. The task is fully resumable: a crash mid-batch leaves already-written rows untouched; the next run picks up from the first job whose hash is still stale.
 
 ### Embedding strategy comparison
@@ -592,6 +594,7 @@ After extraction, if `len(text.strip()) < 50` the result is flagged `is_scanned=
 
 - `CV.__str__` never includes filename or text content — safe in logs and admin
 - When extraction fails, only the exception class is logged (`logger.error`, no traceback): parser messages can quote bytes from the file
+- When the LLM fails on a CV, neither its output nor the validation error is logged (`extract_structured(log_raw=False)`), and unresolvable CV skills are logged by exception class, not by name
 - The upload page never stores the file, only the extracted text. `CV.delete_file()` removes a stored file for any other caller
 - What is kept and for how long: [`docs/matching-design.md`](docs/matching-design.md#5-personal-data)
 
@@ -932,7 +935,7 @@ The ratings for the data analyst and marketing manager are lenient (software rol
 | **Explanations are faithful** | `test_explanation_describes_the_facts_of_a_real_match` — a real `match_profile()` result passed to a mocked model: the prompt carries exactly its levels, gap and skill lists, and never the job description or CV text; the text returned describes those same facts. Plus `apps/intelligence/tests/test_explain.py`. |
 
 ```bash
-pytest                                              # all 139
+pytest                                              # all 150
 pytest apps/intelligence/tests/test_matching.py apps/intelligence/tests/test_explain.py apps/accounts/tests -v
 ```
 
@@ -974,7 +977,7 @@ End-to-end on a throwaway Postgres + pgvector with the real local model and thre
 
 ### Verification — `pytest -v` and `runserver`
 
-- `pytest -v`: **139 passed, 0 failed.**
+- `pytest -v`: **150 passed, 0 failed.**
 - `python manage.py runserver`, driven over HTTP exactly as a browser would (throwaway Postgres + pgvector, local llama3.2 and nomic-embed-text, three sample jobs):
 
 | Step | Result |
