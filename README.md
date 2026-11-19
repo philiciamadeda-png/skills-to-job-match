@@ -426,7 +426,7 @@ pytest --cov=apps --cov-report=term-missing   # with coverage
 
 All tests use a temporary test database and make no real network calls. The test database needs the `pgvector` extension, so run them against the project's Docker Postgres (port 5433 in `.env.example`), not a plain system Postgres.
 
-Current suite: **136 tests, all passing** (`pytest -v`, Python 3.12, PostgreSQL + pgvector 0.6).
+Current suite: **138 tests, all passing** (`pytest -v`, Python 3.12, PostgreSQL + pgvector 0.6).
 
 ## Week 5 — Vector search (CV-to-job matching)
 
@@ -926,11 +926,11 @@ The ratings for the data analyst and marketing manager are lenient (software rol
 | **Scoring is deterministic** | `test_scoring_is_deterministic`, `test_scoring_is_deterministic_across_many_jobs` (5 jobs × 5 runs: identical order, totals and components) |
 | **Hard filters exclude properly, at any score** | `test_remote_only_never_returns_onsite_even_perfect_match[on_site/hybrid]` — a job with 100% skills, same level and identical embedding ranks first unfiltered, and is still absent with `remote_only=True`, `min_score=0`, `limit=1000`. Plus countries, duplicates and min-skills filter tests, and `test_match_detail_respects_filters` for the page. |
 | **Seniority penalises both ways** | `test_seniority_junior_vs_principal_scores_low` (≤ 0.2), `test_seniority_senior_vs_junior_scores_low`, `test_seniority_match_scores_full` |
-| **Empty and unreadable CVs** — no crash, clear message, no garbage matches | Extraction: empty file, unsupported type, scanned PDF. Page: empty upload, PNG upload, DOCX with no readable text, LLM failure (all show a message, no CV stored or marked failed). A CV with no recognised skills gets a message and **no matches** — `match_profile()` now returns `[]` for a profile with no skills instead of ranking jobs on similarity alone. |
+| **Empty and unreadable CVs** — no crash, clear message, no garbage matches | Extraction: empty file, unsupported type, scanned PDF. Page: empty upload, PNG upload, **corrupt DOCX and corrupt PDF** (right file signature, broken inside), DOCX with no readable text, LLM failure (all show a message, no CV stored or marked failed). A CV with no recognised skills gets a message and **no matches** — `match_profile()` now returns `[]` for a profile with no skills instead of ranking jobs on similarity alone. |
 | **Explanations are faithful** | `test_explanation_describes_the_facts_of_a_real_match` — a real `match_profile()` result passed to a mocked model: the prompt carries exactly its levels, gap and skill lists, and never the job description or CV text; the text returned describes those same facts. Plus `apps/intelligence/tests/test_explain.py`. |
 
 ```bash
-pytest                                              # all 136
+pytest                                              # all 138
 pytest apps/intelligence/tests/test_matching.py apps/intelligence/tests/test_explain.py apps/accounts/tests -v
 ```
 
@@ -972,7 +972,7 @@ End-to-end on a throwaway Postgres + pgvector with the real local model and thre
 
 ### Verification — `pytest -v` and `runserver`
 
-- `pytest -v`: **136 passed, 0 failed.**
+- `pytest -v`: **138 passed, 0 failed.**
 - `python manage.py runserver`, driven over HTTP exactly as a browser would (throwaway Postgres + pgvector, local llama3.2 and nomic-embed-text, three sample jobs):
 
 | Step | Result |
@@ -986,5 +986,16 @@ End-to-end on a throwaway Postgres + pgvector with the real local model and thre
 | Server log | no tracebacks, no 500s |
 
 Found and fixed during this check: the prompt shortened *matched* skills to "Django, Docker, PostgreSQL (+1 more)", so the model invented "another skill that is not listed". Matched skills are now listed in full (up to 6); only missing skills are cut to 3. The output checks now also reject "good match", invented "not listed" skills, and "missing is none"-style phrasing.
+
+### Re-check on real jobs (after the Task 7 data load)
+
+Same page, 110 eligible real jobs (Remotive + Arbeitnow) and Redis running:
+
+| Step | Result |
+|---|---|
+| `/cv/13/` (junior Business IT student) | 20 ranked matches. #1 Reporting & Data Analyst 0.69 with "✓ Python, SQL ✗ missing: AWS QuickSight", "role junior, you junior" |
+| `/cv/13/?remote_only=on` | 0 hybrid or on-site jobs in the list |
+| Open match #1 | Explanation from llama3.2: "You have two of the three required skills … including Python and SQL. The missing skill is AWS QuickSight …", and the component table sums to 0.69. **44 s** on the first open (model cold after idling), **0.05 s** on the second (served from the Redis explanation cache) |
+| Corrupt DOCX / PDF | "Text extraction failed. The file may be corrupt." No crash, no CV profile |
 
 Known limits seen in the live run: years of experience is approximate (a CV running 2014–present came back as 7–8 years); and for an all-skills-matched job llama3.2 often fails the checks, so the template explanation is shown — accurate, but plainer.
