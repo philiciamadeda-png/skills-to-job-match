@@ -6,7 +6,7 @@
 {% if profile %}
   <p>
     Level: <strong>{{ profile.seniority|default:"not stated" }}</strong>
-    · Experience: <strong>{% if profile.years_experience is not None %}{{ profile.years_experience }} years{% else %}not stated{% endif %}</strong>
+    · Experience: <strong>{% if profile.years_experience is not None %}{{ profile.years_experience }} year{{ profile.years_experience|pluralize }}{% else %}not stated{% endif %}</strong>
   </p>
   <p>Skills found: {{ skills|join:", "|default:"none" }}</p>
 {% endif %}
