@@ -1,0 +1,7 @@
+{% with current=request.resolver_match.view_name|default:"-" %}
+{% if current in views.split %}
+  <a href="{{ href }}" aria-current="page" class="text-sm font-medium text-primary-700 underline decoration-2 underline-offset-8">{{ label }}</a>
+{% else %}
+  <a href="{{ href }}" class="text-sm font-medium text-slate-600 hover:text-primary-700">{{ label }}</a>
+{% endif %}
+{% endwith %}

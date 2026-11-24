@@ -2,10 +2,10 @@ from django.contrib import admin
 
 from .models import (
     HeadlineTotals,
-    SeniorityDailyCount,
-    SkillDailyCount,
-    SourceDailyCount,
-    WorkModeDailyCount,
+    DailySeniorityCount,
+    DailySkillCount,
+    DailySourceCount,
+    DailyWorkModeCount,
 )
 
 
@@ -22,30 +22,30 @@ class ReadOnlyAdmin(admin.ModelAdmin):
         return False
 
 
-@admin.register(SkillDailyCount)
-class SkillDailyCountAdmin(ReadOnlyAdmin):
+@admin.register(DailySkillCount)
+class DailySkillCountAdmin(ReadOnlyAdmin):
     list_display = ('day', 'skill', 'job_count', 'required_count')
     list_select_related = ('skill',)
     date_hierarchy = 'day'
     search_fields = ('skill__name',)
 
 
-@admin.register(SeniorityDailyCount)
-class SeniorityDailyCountAdmin(ReadOnlyAdmin):
+@admin.register(DailySeniorityCount)
+class DailySeniorityCountAdmin(ReadOnlyAdmin):
     list_display = ('day', 'seniority', 'job_count')
     list_filter = ('seniority',)
     date_hierarchy = 'day'
 
 
-@admin.register(WorkModeDailyCount)
-class WorkModeDailyCountAdmin(ReadOnlyAdmin):
+@admin.register(DailyWorkModeCount)
+class DailyWorkModeCountAdmin(ReadOnlyAdmin):
     list_display = ('day', 'work_mode', 'job_count')
     list_filter = ('work_mode',)
     date_hierarchy = 'day'
 
 
-@admin.register(SourceDailyCount)
-class SourceDailyCountAdmin(ReadOnlyAdmin):
+@admin.register(DailySourceCount)
+class DailySourceCountAdmin(ReadOnlyAdmin):
     list_display = ('day', 'source', 'job_count')
     list_filter = ('source',)
     date_hierarchy = 'day'

@@ -9,25 +9,21 @@ rows until the transaction commits, so the dashboard is never empty mid-refresh.
 import logging
 
 from django.db import transaction
-from django.db.models import Case, CharField, Count, F, Q, Value, When
+from django.db.models import Count, F, Q
 from django.db.models.functions import Coalesce, TruncDate
 from django.utils import timezone
 
 from apps.analytics.models import (
     HeadlineTotals,
-    SeniorityDailyCount,
-    SkillDailyCount,
-    SourceDailyCount,
-    WorkModeDailyCount,
+    DailySeniorityCount,
+    DailySkillCount,
+    DailySourceCount,
+    DailyWorkModeCount,
 )
 from apps.intelligence.models import Job, JobSkill
-from apps.intelligence.schemas import RemoteStatus, Seniority
+from apps.intelligence.queries import seniority_expression, work_mode_expression
 
 logger = logging.getLogger(__name__)
-
-UNKNOWN = 'unknown'
-_LEVELS = [s.value for s in Seniority if s is not Seniority.NOT_STATED]
-_WORK_MODES = [s.value for s in RemoteStatus if s is not RemoteStatus.NOT_STATED]
 
 
 def _posted_day(prefix: str = ''):
@@ -40,31 +36,22 @@ def _jobs():
     return Job.objects.filter(canonical__isnull=True).annotate(day=_posted_day())
 
 
-def _seniority_rows() -> list[SeniorityDailyCount]:
-    level = Case(When(seniority__in=_LEVELS, then=F('seniority')),
-                 default=Value(UNKNOWN), output_field=CharField())
-    qs = _jobs().annotate(level=level).values('day', 'level').annotate(n=Count('id'))
-    return [SeniorityDailyCount(day=r['day'], seniority=r['level'], job_count=r['n']) for r in qs]
+def _seniority_rows() -> list[DailySeniorityCount]:
+    qs = _jobs().annotate(level=seniority_expression()).values('day', 'level').annotate(n=Count('id'))
+    return [DailySeniorityCount(day=r['day'], seniority=r['level'], job_count=r['n']) for r in qs]
 
 
-def _work_mode_rows() -> list[WorkModeDailyCount]:
-    # The LLM's reading of the description wins; a "Remote" location is the fallback.
-    mode = Case(
-        When(extracted_remote_status__in=_WORK_MODES, then=F('extracted_remote_status')),
-        When(location__is_remote=True, then=Value(RemoteStatus.REMOTE.value)),
-        default=Value(UNKNOWN),
-        output_field=CharField(),
-    )
-    qs = _jobs().annotate(mode=mode).values('day', 'mode').annotate(n=Count('id'))
-    return [WorkModeDailyCount(day=r['day'], work_mode=r['mode'], job_count=r['n']) for r in qs]
+def _work_mode_rows() -> list[DailyWorkModeCount]:
+    qs = _jobs().annotate(mode=work_mode_expression()).values('day', 'mode').annotate(n=Count('id'))
+    return [DailyWorkModeCount(day=r['day'], work_mode=r['mode'], job_count=r['n']) for r in qs]
 
 
-def _source_rows() -> list[SourceDailyCount]:
+def _source_rows() -> list[DailySourceCount]:
     qs = _jobs().values('day', 'source').annotate(n=Count('id'))
-    return [SourceDailyCount(day=r['day'], source=r['source'], job_count=r['n']) for r in qs]
+    return [DailySourceCount(day=r['day'], source=r['source'], job_count=r['n']) for r in qs]
 
 
-def _skill_rows() -> list[SkillDailyCount]:
+def _skill_rows() -> list[DailySkillCount]:
     qs = (
         JobSkill.objects
         .filter(job__canonical__isnull=True)
@@ -73,7 +60,7 @@ def _skill_rows() -> list[SkillDailyCount]:
         .annotate(n=Count('id'), required=Count('id', filter=Q(is_required=True)))
     )
     return [
-        SkillDailyCount(day=r['day'], skill_id=r['skill_id'], job_count=r['n'], required_count=r['required'])
+        DailySkillCount(day=r['day'], skill_id=r['skill_id'], job_count=r['n'], required_count=r['required'])
         for r in qs
     ]
 
@@ -93,10 +80,10 @@ def refresh_aggregates() -> dict:
     """Recompute every dashboard table and swap the new rows in atomically."""
     started = timezone.now()
     tables = {
-        SkillDailyCount: _skill_rows(),
-        SeniorityDailyCount: _seniority_rows(),
-        WorkModeDailyCount: _work_mode_rows(),
-        SourceDailyCount: _source_rows(),
+        DailySkillCount: _skill_rows(),
+        DailySeniorityCount: _seniority_rows(),
+        DailyWorkModeCount: _work_mode_rows(),
+        DailySourceCount: _source_rows(),
     }
     headline = _headline()
 

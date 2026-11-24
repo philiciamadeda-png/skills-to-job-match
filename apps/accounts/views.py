@@ -1,22 +1,27 @@
 """
-Plain upload → matches pages. Styling comes later; these only need to work.
+Sign-up, profile, and the upload → matches → match-detail flow.
 
 The CV file itself is never stored — only the extracted text.
 """
 from urllib.parse import urlencode
 
+from django.contrib import messages
+from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required
 from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.views.decorators.vary import vary_on_headers
 
 from apps.accounts.extraction import extract_text
-from apps.accounts.forms import CVUploadWithFiltersForm, MatchFilterForm
+from apps.accounts.forms import CVUploadWithFiltersForm, MatchFilterForm, SignUpForm
 from apps.accounts.models import CV, CVProfile
 from apps.accounts.services import ProfileBuildError, build_profile
-from apps.intelligence.matching import match_profile
+from apps.core.htmx import is_htmx
+from apps.intelligence.matching import common_gaps, match_profile
 
 MATCH_LIMIT = 20
+PROFILE_MATCHES = 5
 
 NO_SKILLS_MESSAGE = (
     "We read your CV but couldn't find any skills we recognise, so we can't match it to jobs. "
@@ -25,6 +30,18 @@ NO_SKILLS_MESSAGE = (
 PROFILE_FAILED_MESSAGE = (
     "We read your CV but couldn't analyse it just now. Please try again in a minute."
 )
+
+
+def signup(request):
+    if request.user.is_authenticated:
+        return redirect('accounts:profile')
+    form = SignUpForm(request.POST or None)
+    if request.method == 'POST' and form.is_valid():
+        user = form.save()
+        login(request, user)
+        messages.success(request, f'Welcome, {user.username}. Upload a CV to see the jobs it matches.')
+        return redirect('accounts:upload')
+    return render(request, 'registration/signup.html', {'form': form})
 
 
 def _filter_query(remote_only: bool, countries: list[str]) -> str:
@@ -41,6 +58,38 @@ def _filters(request):
     if form.is_bound and form.is_valid():
         return form, form.cleaned_data['remote_only'], form.cleaned_data['countries']
     return form, False, []
+
+
+def _ranked(profile, *, remote_only=False, countries=(), limit=MATCH_LIMIT):
+    """(skills, results, message) for a profile — the message explains an empty list."""
+    if profile is None:
+        return [], [], PROFILE_FAILED_MESSAGE
+    skills = sorted(profile.skills.values_list('name', flat=True))
+    if not skills:
+        return skills, [], NO_SKILLS_MESSAGE
+    results = match_profile(profile, remote_only=remote_only, countries=countries, limit=limit)
+    message = '' if results else 'No jobs pass your filters. Try removing a filter.'
+    return skills, results, message
+
+
+@login_required
+def profile(request):
+    # select_related: the reverse one-to-one is joined, so hasattr() below doesn't query per CV
+    cvs = list(CV.objects.filter(owner=request.user).select_related('profile'))
+    latest = next((cv for cv in cvs if cv.status == CV.Status.READY and hasattr(cv, 'profile')), None)
+    context = {'cvs': cvs, 'latest': latest}
+    if latest:
+        skills, results, message = _ranked(latest.profile)
+        context.update({
+            'profile': latest.profile,
+            'skills': skills,
+            'results': results[:PROFILE_MATCHES],
+            'gap_basis': results,               # gaps are counted over all top matches, not just the 5 shown
+            'gaps': common_gaps(results),
+            'match_count': len(results),
+            'message': message,
+        })
+    return render(request, 'accounts/profile.html', context)
 
 
 @login_required
@@ -85,37 +134,27 @@ def _own_profile(request, cv_id):
 
 
 @login_required
+@vary_on_headers('HX-Request')
 def matches(request, cv_id):
     cv, profile = _own_profile(request, cv_id)
     filter_form, remote_only, countries = _filters(request)
+    skills, results, message = _ranked(profile, remote_only=remote_only, countries=countries)
 
-    message, results, skills = '', [], []
-    if profile is None:
-        message = PROFILE_FAILED_MESSAGE
-    else:
-        skills = sorted(profile.skills.values_list('name', flat=True))
-        if not skills:
-            message = NO_SKILLS_MESSAGE
-        else:
-            results = match_profile(profile, remote_only=remote_only, countries=countries, limit=MATCH_LIMIT)
-            if not results:
-                message = 'No jobs pass your filters. Try removing a filter.'
-
-    return render(request, 'accounts/matches.html', {
+    context = {
         'cv': cv,
         'profile': profile,
         'skills': skills,
         'results': results,
+        'gaps': common_gaps(results),
         'message': message,
         'filter_form': filter_form,
         'filter_query': _filter_query(remote_only, countries),
-    })
+    }
+    template = 'accounts/_match_results.html' if is_htmx(request) else 'accounts/matches.html'
+    return render(request, template, context)
 
 
-@login_required
-def match_detail(request, cv_id, job_id):
-    from apps.intelligence.explain import explain_match_with_source
-
+def _one_match(request, cv_id, job_id):
     cv, profile = _own_profile(request, cv_id)
     _, remote_only, countries = _filters(request)
     if profile is None:
@@ -124,13 +163,15 @@ def match_detail(request, cv_id, job_id):
     found = match_profile(profile, remote_only=remote_only, countries=countries, job_ids=[job_id], limit=1)
     if not found:
         raise Http404('This job is not a match for this CV with the current filters.')
-    result = found[0]
+    return cv, profile, found[0], _filter_query(remote_only, countries)
 
-    # Generated on demand, only for the match the user opened
-    explanation, source = explain_match_with_source(result)
 
+@login_required
+def match_detail(request, cv_id, job_id):
+    """Score and facts render at once; the explanation loads separately (it can take ~30 s)."""
+    cv, profile, result, filter_query = _one_match(request, cv_id, job_id)
     rows = [
-        (name, result.components[name], result.weights[name], result.contributions[name])
+        (name, COMPONENT_LABELS[name], result.components[name], result.weights[name], result.contributions[name])
         for name in result.components
     ]
     return render(request, 'accounts/match_detail.html', {
@@ -138,7 +179,28 @@ def match_detail(request, cv_id, job_id):
         'profile': profile,
         'r': result,
         'rows': rows,
+        'filter_query': filter_query,
+    })
+
+
+@login_required
+def match_explanation(request, cv_id, job_id):
+    """The 'Why this match' text, fetched by HTMX once the detail page is showing."""
+    from apps.intelligence.explain import explain_match_with_source
+
+    _, _, result, _ = _one_match(request, cv_id, job_id)
+    # Generated on demand, only for the match the user opened (cached after the first time)
+    explanation, source = explain_match_with_source(result)
+    return render(request, 'accounts/_explanation.html', {
         'explanation': explanation,
         'explanation_source': source,
-        'filter_query': _filter_query(remote_only, countries),
     })
+
+
+COMPONENT_LABELS = {
+    'required_skill': 'Required skills',
+    'semantic': 'Similarity',
+    'seniority': 'Seniority fit',
+    'nice_to_have': 'Nice-to-have skills',
+    'recency': 'Recency',
+}

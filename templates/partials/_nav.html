@@ -1,0 +1,26 @@
+<header class="border-b border-slate-200 bg-white">
+  <nav class="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-2 px-4 py-4 sm:px-6" aria-label="Main">
+    <a href="{% url 'analytics:dashboard' %}" class="mr-2 font-semibold text-slate-900 hover:text-primary-700">Skills to Job Match</a>
+
+    {% url 'analytics:dashboard' as dashboard_url %}
+    {% url 'jobs:list' as jobs_url %}
+    {% url 'accounts:upload' as match_url %}
+    {% include "partials/_nav_link.html" with href=dashboard_url label="Dashboard" views="analytics:dashboard" %}
+    {% include "partials/_nav_link.html" with href=jobs_url label="Jobs" views="jobs:list" %}
+    {% include "partials/_nav_link.html" with href=match_url label="Match my CV" views="accounts:upload accounts:matches accounts:match_detail" %}
+
+    <div class="ml-auto flex items-center gap-4 text-sm">
+      {% if user.is_authenticated %}
+        {% url 'accounts:profile' as profile_url %}
+        {% include "partials/_nav_link.html" with href=profile_url label="My profile" views="accounts:profile" %}
+        <form method="post" action="{% url 'logout' %}">
+          {% csrf_token %}
+          <button type="submit" class="cursor-pointer text-slate-600 hover:text-primary-700">Log out</button>
+        </form>
+      {% else %}
+        <a href="{% url 'login' %}" class="text-slate-600 hover:text-primary-700">Log in</a>
+        <a href="{% url 'accounts:signup' %}" class="btn">Sign up</a>
+      {% endif %}
+    </div>
+  </nav>
+</header>

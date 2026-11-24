@@ -26,7 +26,7 @@ class DailyCount(models.Model):
         abstract = True
 
 
-class SkillDailyCount(DailyCount):
+class DailySkillCount(DailyCount):
     """Jobs posted on `day` that ask for `skill` (required or nice-to-have)."""
     skill = models.ForeignKey(Skill, on_delete=models.CASCADE, related_name='daily_counts')
     required_count = models.PositiveIntegerField(default=0)
@@ -38,7 +38,7 @@ class SkillDailyCount(DailyCount):
         indexes = [models.Index(fields=['skill', 'day'])]
 
 
-class SeniorityDailyCount(DailyCount):
+class DailySeniorityCount(DailyCount):
     seniority = models.CharField(max_length=20)   # junior … director, or 'unknown'
 
     class Meta:
@@ -47,7 +47,7 @@ class SeniorityDailyCount(DailyCount):
         ]
 
 
-class WorkModeDailyCount(DailyCount):
+class DailyWorkModeCount(DailyCount):
     class WorkMode(models.TextChoices):
         REMOTE = 'remote', 'Remote'
         HYBRID = 'hybrid', 'Hybrid'
@@ -62,7 +62,7 @@ class WorkModeDailyCount(DailyCount):
         ]
 
 
-class SourceDailyCount(DailyCount):
+class DailySourceCount(DailyCount):
     """New jobs per day per source (remotive, arbeitnow, …)."""
     source = models.CharField(max_length=100)
 

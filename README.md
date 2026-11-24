@@ -32,6 +32,7 @@ Matching then works on top of the structured jobs:
 - Pydantic — LLM output schema validation
 - `django-environ`, `requests`
 - `pytest` + `factory-boy` for tests
+- Production: Docker, gunicorn, WhiteNoise, Render (see [`docs/deployment.md`](docs/deployment.md))
 
 ## Project structure
 
@@ -52,12 +53,21 @@ apps/
       compare_embedding_strategies.py   # Embedding strategy harness
       results/                          # Timestamped JSON result files per prompt version
   accounts/       # CV and CVProfile models, CV text extraction, profile service,
-                  # upload → matches → match pages (views, forms, templates)
+                  # sign-up, profile, upload → matches → match pages
   analytics/      # Dashboard aggregation tables, refresh service + Celery task,
-                  # selectors (what the dashboard reads)
+                  # selectors (what the dashboard reads), dashboard view
+  core/           # TimestampedModel, HTMX helper, `ui` template filters
+templates/        # base.html, partials/ (nav, messages, form field), registration/ (login, sign-up)
+assets/
+  tailwind.css    # Tailwind source: the three colours and shared components (outside static/ on purpose)
+static/
+  css/app.css     # Built CSS (committed)
+  js/dashboard.js # Chart.js setup for the four dashboard charts
+  vendor/         # HTMX 2.0.11, Chart.js 4.6.2 — served locally, no CDN
 docs/
   matching-design.md       # Design note for the matching feature
   matching-evaluation.md   # Hand-judged results, fixes, remaining failures
+  deployment.md            # Production on Render + first-deploy error checklist
   model-card-seniority.md
   prompt-iteration.md
 config/
@@ -68,7 +78,9 @@ config/
     production.py
 conftest.py
 pytest.ini
-docker-compose.yml
+docker-compose.yml        # local Postgres + Redis
+Dockerfile                # production image: web, worker and beat all run from it
+render.yaml               # Render Blueprint: database, Key Value, web, worker, beat
 ```
 
 ## Prerequisites
@@ -116,6 +128,8 @@ Open `.env` and set your values:
 | `REDIS_URL`         | e.g. `redis://localhost:6379/0` (this is the default if unset)    |
 | `OPENAI_API_KEY`    | Optional — leave unset to use local Ollama instead                |
 | `LLM_BASE_URL`      | LLM endpoint, default `http://localhost:11434/v1` (Ollama)        |
+| `LLM_MODEL`         | Default `llama3.2`                                                 |
+| `EMBED_BASE_URL`, `EMBED_MODEL`, `EMBED_DIMENSIONS` | Embeddings endpoint; defaults to Ollama `nomic-embed-text`. Production uses OpenAI `text-embedding-3-small` with `768` |
 
 ### 4. Start PostgreSQL and Redis
 
@@ -200,7 +214,7 @@ python manage.py runserver
 
 Beat dispatches `task_ingest_jobs` every 2 hours, `task_transform_jobs` 30 minutes later, `task_extract_jobs` after that and `task_embed_jobs` last, with run records appearing at `/admin/ingestion/ingestionrun/`, `/admin/intelligence/extractionrun/` and `/admin/intelligence/embeddingrun/`. Extraction only takes pending jobs and embedding only takes jobs whose text or model changed, and each holds a Redis lock, so a stage that starts before the previous one has finished just picks up the rest on its next run.
 
-When transform finishes, and when an extraction run extracts at least one job, a `task_refresh_aggregates` is queued to rebuild the dashboard tables. Beat also runs it once a day as a safety net. See "Week 6 — Aggregations and query performance".
+When transform finishes, and when an extraction run extracts at least one job, the `refresh_aggregates` task is queued to rebuild the dashboard tables. Beat also runs it once a day as a safety net. See "Week 6 — Aggregations and query performance".
 
 ## Maintaining the skill vocabulary
 
@@ -1018,10 +1032,10 @@ Counting the most requested skills across every job on every page load scans all
 
 | Model | One row per | Feeds |
 |---|---|---|
-| `SkillDailyCount` | day × skill (`job_count`, `required_count`) | Top skills, daily skill trend |
-| `SeniorityDailyCount` | day × level (`junior` … `director`, `unknown`) | Jobs by seniority |
-| `WorkModeDailyCount` | day × `remote` / `hybrid` / `on_site` / `unknown` | Remote vs on-site |
-| `SourceDailyCount` | day × source | New jobs per day, per source |
+| `DailySkillCount` | day × skill (`job_count`, `required_count`) | Top skills, daily skill trend |
+| `DailySeniorityCount` | day × level (`junior` … `director`, `unknown`) | Jobs by seniority |
+| `DailyWorkModeCount` | day × `remote` / `hybrid` / `on_site` / `unknown` | Remote vs on-site |
+| `DailySourceCount` | day × source | New jobs per day, per source |
 | `HeadlineTotals` | a single row (pk=1) | Jobs tracked, companies, distinct skills, `refreshed_at` |
 
 Definitions:
@@ -1036,7 +1050,7 @@ Definitions:
 
 - **Replace, never increment.** Every run computes the totals from scratch, so a second run writes the same rows again. It never adds to the first run's numbers. Late changes are picked up too: extraction filling in skills on older jobs, a job marked as a duplicate, a deleted job.
 - **Unique constraints** on `(day, skill)`, `(day, seniority)`, `(day, work_mode)` and `(day, source)`. If two refreshes ever raced, the second would fail loudly instead of inserting a second copy.
-- **A Redis lock** in `task_refresh_aggregates` stops two refreshes overlapping in the first place.
+- **A Redis lock** in the `refresh_aggregates` task (`apps/analytics/tasks.py`) stops two refreshes overlapping in the first place.
 - **Atomic swap.** Postgres readers see the old rows until the commit, so the dashboard is never empty or half-built. A refresh that fails rolls back and the previous numbers stay.
 
 When it runs:
@@ -1078,9 +1092,197 @@ The toolbar shows the problem on one page load. The tests in `apps/core/tests/te
 - **They combine.** `Prefetch('jobskill_set', queryset=JobSkill.objects.select_related('skill'))` prefetches the through-table rows and joins each one to its skill.
 - **The trap** (the one we hit above): a prefetch only fills `.all()`. Calling `.values_list()`, `.filter()`, `.count()` or `.order_by()` on the related manager starts a fresh query and ignores the prefetched rows.
 
+### Verification
+
+On the local database (12 jobs), with a Celery worker running:
+
+```bash
+python manage.py shell -c "from apps.analytics.tasks import refresh_aggregates; refresh_aggregates.delay()"
+python manage.py shell -c "from apps.analytics.models import DailySkillCount; print(DailySkillCount.objects.count())"
+```
+
+| | Run 1 | Run 2 |
+|---|---|---|
+| `DailySkillCount` rows / sum of `job_count` | 91 / 91 | 91 / 91 |
+| Sum of `DailySeniorityCount` / `DailySourceCount` | 12 / 12 | 12 / 12 |
+| Headline | 12 jobs, 9 companies, 74 skills | 12 jobs, 9 companies, 74 skills |
+| Worker | `succeeded in 0.09s` | `succeeded in 0.07s` |
+
+The second run left every number unchanged (no doubling). Only `refreshed_at` moved forward.
+
+Query count per page from the debug toolbar's SQL panel (`runserver`, signed in):
+
+| Page | Queries |
+|---|---|
+| `/` upload | 3 |
+| `/cv/<id>/` matches (9 jobs) | 8 |
+| `/cv/<id>/job/<id>/` match detail | 7 |
+| Admin: jobs list | 7 |
+| Admin: job skills list | 6 |
+| Admin: skills list | 6 |
+| Admin: raw payloads list | 6 |
+| Admin: daily skill counts | 7 |
+
+Every page is at or under 10 queries. The 3-vs-30-jobs tests show the counts don't grow with more rows.
+
 ### Tests
 
 ```bash
 pytest apps/analytics apps/core -v     # 21 tests
 pytest                                 # all 171
+```
+
+## Week 6 — The interface (Task 2)
+
+The prompt is in [`week6_task2_prompt.md`](week6_task2_prompt.md). It describes the aggregation models, the four questions the dashboard answers, and the pages.
+
+### Pages
+
+| URL | Who | What |
+|---|---|---|
+| `/` | Everyone | **Dashboard**: four headline numbers and four charts |
+| `/jobs/` | Everyone | **Job list**: search (title, company, skill), filters for level, work mode and source, 20 per page |
+| `/match/` | Signed in | Upload a CV (was `/` in Week 5) |
+| `/cv/<id>/` | Signed in | Ranked matches with matched ✓ and missing ✗ skills, level fit, and a **"Your biggest gaps"** panel |
+| `/cv/<id>/job/<id>/` | Signed in | Explanation, how the score was built, and the facts |
+| `/accounts/signup/`, `/accounts/login/` | Everyone | Sign up / log in. Log out is a POST from the nav. |
+| `/accounts/profile/` | Signed in | Latest CV, its top 5 matches and gaps, and earlier CVs |
+
+Sign-in no longer goes through the admin login page. `LOGIN_URL` is the new `/accounts/login/`.
+
+### The dashboard: four questions, four charts
+
+Each chart answers one question. The question is the heading, and a sentence under it gives the answer, worked out from the same numbers as the chart.
+
+| Question | Chart | Example answer (local data) |
+|---|---|---|
+| Which skills are employers asking for most? | Horizontal bar, top 10 skills. Axes: *Skill*, *Jobs asking for the skill* | "Python is asked for most: 4 of 12 jobs (33%)." |
+| Is demand for those skills rising or falling? | Line, weekly, top 5 skills, the last 12 weeks of data. Axes: *Week starting*, *Jobs posted* | "Rising most: Python, 3 jobs in the last 4 weeks against 1 in the 4 before." |
+| What level are employers hiring at? | Bar, junior → director, then "not stated" in grey. Axes: *Seniority*, *Jobs* | "Of jobs that state a level, most are senior (7 of 7). 5 don't say." |
+| How many roles can be done remotely? | Bar: remote, hybrid, on-site, not stated. Axes: *Work mode*, *Jobs* | "12 of 12 jobs (100%) can be done fully remotely." |
+
+Headline numbers: jobs tracked, companies hiring, distinct skills, and new jobs in the last 7 days.
+
+New jobs per day per source is computed (Task 1) but isn't a chart. "Which board did a job come from?" isn't a question a job seeker asks, so it stays as data for the admin.
+
+The trend chart ends at the latest week that has data, not at today, so a pause in ingestion doesn't leave it empty.
+
+The dashboard reads only the aggregation tables. `test_dashboard_never_reads_raw_jobs` checks that, and the page runs 7 queries.
+
+### Structure
+
+- **One base template** (`templates/base.html`): the nav, messages and footer. Every page extends it, and the old `accounts/base.html` is gone.
+- **Partials** (`_*.html`): every fragment HTMX swaps is its own template.
+  - `intelligence/_job_results.html` (+ `_job_row.html`)
+  - `accounts/_match_results.html` (+ `_match_card.html`, `_gaps.html`)
+  - shared pieces in `templates/partials/` (nav, messages, form field)
+- **HTMX** (`apps/core/htmx.py`): a view returns the partial when the request has `HX-Request: true`, and the full page otherwise. That includes HTMX's history-restore requests, so every URL works without JavaScript. Responses send `Vary: HX-Request` so a browser cache never mixes up the two.
+  - **Job list:** typing in the search box (debounced 300 ms) or changing a filter swaps just the results and pushes the URL, so a filtered list can be bookmarked or shared. Paging does the same.
+  - **Matches page:** the remote/countries filters swap the results the same way.
+- **Three colours**, enforced by the build. `assets/tailwind.css` switches Tailwind's default palette off (`--color-*: initial`) and defines only:
+  - **primary** (indigo): actions, links, chart bars, matched skills
+  - **slate**: text, borders, backgrounds, "not stated" bars
+  - **accent** (amber): only for gaps — missing skills, roles above your level, errors
+
+  Any other colour class simply doesn't exist in the built CSS. The charts read the same CSS variables. The 5-line trend chart stays apart with shades of primary and dash patterns, not new colours.
+- **Spacing**: cards are `p-6` with `gap-6` between them, and inner spacing is `2` / `4`. Shared components (`.card`, `.btn`, `.chip`, `.chip-gap`) live in `app.css`. Django's form widgets are styled in Tailwind's base layer, so forms need no per-field classes.
+
+### Building the CSS
+
+Tailwind v4 standalone CLI, through the `pytailwindcss` pip package (no Node needed). The built file is committed, so you only need this after changing classes in a template:
+
+```bash
+tailwindcss -i assets/tailwind.css -o static/css/app.css --minify            # once
+tailwindcss -i assets/tailwind.css -o static/css/app.css --watch             # while editing
+```
+
+### Query counts
+
+The new pages are in the 3-vs-30-jobs N+1 tests (`apps/core/tests/test_query_counts.py`):
+
+| Page | Queries |
+|---|---|
+| Dashboard | 7 (aggregation tables only) |
+| Job list | constant. `select_related('company', 'location')` + `Prefetch('jobskill_set', … select_related('skill'))`, search on skills via `EXISTS` (no duplicate rows, no `DISTINCT`) |
+| Profile | constant. `select_related('profile')` on the CV list, so checking each CV for a profile doesn't query |
+| Matches | 8 (unchanged) |
+
+The job list's remote filter uses the same rule as the dashboard (`apps/intelligence/queries.py`). `test_remote_filter_agrees_with_dashboard` checks that the two counts match.
+
+### Checked in a browser
+
+`runserver` plus headless Chromium on the local data:
+- every page rendered, with no JavaScript errors and no server errors
+- typing "python" and choosing **Remote** on `/jobs/` updated the list and the URL (`?q=python&work_mode=remote…`) without a page reload
+- the dashboard, matches, match detail, profile, sign-up and login pages looked right at desktop width, and the dashboard also at phone width (390 px)
+
+One fix from that check: match cards now list the first 6 missing skills, then "and N more". One job listed 31, which made a wall of amber text. The full list stays on the match detail page.
+
+### Verification: a first-time visitor walkthrough
+
+`python manage.py runserver`, then a headless browser acting as someone who has never seen the site. Real clicks and typing only, with a new account and a real CV (`eval_cvs/02_brian_otieno_senior_backend_engineer.docx`):
+
+| # | Step | Result |
+|---|---|---|
+| 1 | Open `/` | Dashboard: 4 headline numbers, 4 charts |
+| 2 | **Jobs** → type "react" → Level **Senior** | List narrows to 4 without a reload. URL `/jobs/?q=react&seniority=senior` |
+| 3 | Search "zzzz-nothing" | "No jobs match. Try a broader search or clear a filter." |
+| 4 | Browser **Back** | URL, results *and* the search box are back to "react" |
+| 5 | Open a shared link `/jobs/?work_mode=remote` | Filter applied, and the dropdown shows "Remote" |
+| 6 | **Match my CV** while signed out | Sent to log in. **Create an account** |
+| 7 | Sign up with password `12345` | Three clear password errors |
+| 8 | Sign up properly | Signed in, on `/match/`, with "Welcome, …" |
+| 9 | Upload `notes.txt` | "Unsupported file type. Upload a PDF or DOCX." |
+| 10 | Upload the CV | 40 s, then 9 ranked matches, the gaps panel, and skills read from the CV |
+| 11 | Tick **Remote only** | Results swap and the URL gets `?remote_only=on` |
+| 12 | Countries "Kenya" → Apply | "Filters not applied — showing all matches. Use two-letter country codes…" |
+| 13 | Open match #1 | Score and facts in **0.1 s**. "Writing a short explanation…" until it arrives at 37 s |
+| 14 | **My profile** | Latest CV, top 5 matches, gaps |
+| 15 | **Log out** → **Log in** with a wrong password, then the right one | "That username and password don't match." Then back to the profile |
+
+No JavaScript errors, no console errors, no HTTP errors and no server tracebacks across the whole walkthrough.
+
+Fixed because of it:
+- **Back button:** after an HTMX search, Back restored the results but left the search box empty. HTMX now keeps no page snapshots (`historyCacheSize: 0`), so Back re-fetches the page and the server fills in the form from the URL.
+- **Bad country codes were silently ignored** when the filter was applied through HTMX, because the form errors lived outside the swapped results. The results partial now says the filters weren't applied and why.
+- **Opening a match hung for ~37 s** while the language model wrote the explanation. The page now renders at once. "Why this match" loads separately (`/cv/<id>/job/<id>/explanation/`) with a "writing…" message, and a fallback message if that request fails.
+- **Empty filters in URLs** (`&work_mode=&source=`) are dropped (`static/js/htmx-setup.js`).
+- The upload page promised "a few seconds". It now says 20–60 seconds, which matches what the local model takes.
+
+Seen but not fixed here (a Week 5 extraction issue, separate from the interface): a CV that groups skills under labels ("Analysis: SQL", "Data: PostgreSQL") has the labels kept in the skill names. Those then don't match the jobs' "SQL" / "PostgreSQL", so every match shows 0 required skills.
+
+### Tests
+
+```bash
+pytest apps/analytics/tests/test_dashboard.py apps/intelligence/tests/test_job_list.py \
+       apps/accounts/tests/test_auth_and_profile.py apps/core -v
+pytest                                     # all 211
+```
+
+## Week 6 — Deployment (Task 3)
+
+The prompt is in [`week6_task3_prompt.md`](week6_task3_prompt.md). The full answer is **[`docs/deployment.md`](docs/deployment.md)**: production settings, static files, the Dockerfile, migrations, worker and beat, step-by-step first deploy, and a 30-item first-deploy error checklist.
+
+**Host: Render.** A `render.yaml` Blueprint defines all five resources: Postgres with pgvector, a Key Value store (Redis-compatible), the gunicorn web service, the Celery worker and Celery beat. All three app processes run from one `Dockerfile`. Migrations run in `preDeployCommand`, so a failed migration stops the deploy while the old version keeps serving. About $27/month.
+
+**AI in production:** OpenAI (`gpt-4o-mini`, `text-embedding-3-small` at 768 dimensions). The model and endpoint are now settings (`LLM_MODEL`, `EMBED_*`). Locally nothing changes: embeddings go through Ollama's OpenAI-style `/v1/embeddings`, which was checked to return identical vectors to the old `/api/embed`.
+
+**New files:** `Dockerfile`, `.dockerignore`, `render.yaml`, `config/settings/production.py` (rewritten), `apps/core/middleware.py` (`/healthz/`). The Tailwind source moved to `assets/tailwind.css`.
+
+**Verified** by building the production image locally and running web + worker + beat against an empty Postgres:
+- migrations and pgvector applied, and a second run changed nothing
+- `check --deploy` clean
+- HTTPS redirect, HSTS, hashed + gzipped static files, CSRF origin check, a plain 404 page
+- the full pipeline ingested 15 real jobs through to the dashboard
+- memory 100–180 MB per process, graceful shutdown in 1 s
+
+Building the image also caught four real first-deploy errors, now fixed and listed in the checklist:
+- the Tailwind source inside `static/`
+- a Chart.js source-map reference
+- `sh -c` without `exec` swallowing `SIGTERM`
+- a `SECRET_KEY` rule that would have rejected Render's generated key
+
+```bash
+docker build -t skills-to-job-match .                              # or: podman build
+pytest apps/core/tests/test_deploy.py -v                            # production settings + health check
 ```

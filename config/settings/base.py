@@ -31,6 +31,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    'apps.core.middleware.HealthCheckMiddleware',      # /healthz/ — before host checks and redirects
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -73,18 +74,28 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+# Built Tailwind CSS and vendored HTMX / Chart.js
+STATICFILES_DIRS = [BASE_DIR / 'static']
 
 MEDIA_URL = 'media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# No sign-up flow yet — sign in through the admin login page
-LOGIN_URL = 'admin:login'
+LOGIN_URL = 'login'
+LOGIN_REDIRECT_URL = 'accounts:profile'
+LOGOUT_REDIRECT_URL = 'analytics:dashboard'
 
-# LLM
+# LLM and embeddings — any OpenAI-compatible API. Defaults are local Ollama;
+# production points these at a hosted API (see docs/deployment.md).
 OPENAI_API_KEY = env("OPENAI_API_KEY", default="")
 LLM_BASE_URL = env("LLM_BASE_URL", default="http://localhost:11434/v1")
+LLM_MODEL = env("LLM_MODEL", default="llama3.2")
+EMBED_BASE_URL = env("EMBED_BASE_URL", default=LLM_BASE_URL)
+EMBED_MODEL = env("EMBED_MODEL", default="nomic-embed-text")
+# Job.embedding is vector(768). Models that can shorten their output
+# (OpenAI text-embedding-3-*) must be asked for 768; leave unset for nomic-embed-text.
+EMBED_DIMENSIONS = env.int("EMBED_DIMENSIONS", default=None)
 
 # Celery
 CELERY_BROKER_URL = env('REDIS_URL', default='redis://localhost:6379/0')
@@ -122,7 +133,7 @@ CELERY_BEAT_SCHEDULE = {
     # Transform and extraction each queue a refresh when they finish; this
     # catches anything else that changes jobs (dedup, admin edits).
     'refresh-aggregates-daily': {
-        'task': 'apps.analytics.tasks.task_refresh_aggregates',
+        'task': 'apps.analytics.tasks.refresh_aggregates',
         'schedule': 86400,
     },
 }

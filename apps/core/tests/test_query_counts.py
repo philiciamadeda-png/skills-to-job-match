@@ -72,6 +72,30 @@ def test_matches_page_query_count_does_not_grow(client, job_factory):
     assert many <= 10
 
 
+def test_job_list_query_count_does_not_grow(client, job_factory):
+    def load():
+        assert client.get(reverse('jobs:list'), {'q': 'job'}).status_code == 200
+
+    few, many = _counts_for(job_factory, load)
+    assert many == few
+    assert many <= 10
+
+
+def test_profile_page_query_count_does_not_grow(client, job_factory):
+    user = get_user_model().objects.create_user(username='alice', password='pw')
+    client.force_login(user)
+    for name in ('a.docx', 'b.docx', 'c.docx'):
+        cv = CV.objects.create(owner=user, original_filename=name, status=CV.Status.READY, extracted_text='x')
+        CVProfile.objects.create(cv=cv, seniority='senior', embedding=VECTOR).skills.set(_skills())
+
+    def load():
+        assert client.get(reverse('accounts:profile')).status_code == 200
+
+    few, many = _counts_for(job_factory, load, embedding=VECTOR)
+    assert many == few
+    assert many <= 10
+
+
 @pytest.mark.parametrize('url_name', [
     'admin:intelligence_job_changelist',
     'admin:intelligence_jobskill_changelist',

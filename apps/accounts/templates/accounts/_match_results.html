@@ -1,0 +1,23 @@
+{# Swapped by HTMX when the filters change. #}
+{% if filter_form.errors %}
+  <div class="card mb-6 border-accent-200 bg-accent-50 text-sm text-accent-800">
+    <p class="font-medium">Filters not applied — showing all matches.</p>
+    {% for errors in filter_form.errors.values %}{% for e in errors %}<p class="mt-1">{{ e }}</p>{% endfor %}{% endfor %}
+  </div>
+{% endif %}
+{% if message %}
+  <div class="card border-accent-200 bg-accent-50">
+    <p class="text-sm text-accent-800">{{ message }}</p>
+  </div>
+{% endif %}
+
+{% if results %}
+  {% include "accounts/_gaps.html" %}
+
+  <p class="muted mt-6 mb-4">Top {{ results|length }} match{{ results|length|pluralize:"es" }}, best first. Open one to see how its score was built.</p>
+  <ol class="space-y-4">
+    {% for r in results %}
+      {% include "accounts/_match_card.html" with rank=forloop.counter %}
+    {% endfor %}
+  </ol>
+{% endif %}

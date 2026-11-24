@@ -1,12 +1,21 @@
 from django import forms
+from django.contrib.auth.forms import UserCreationForm
 
 from apps.accounts.extraction import MAX_FILE_SIZE, SUPPORTED_MIME_TYPES, detect_mime
+
+
+class SignUpForm(UserCreationForm):
+    email = forms.EmailField(required=False, help_text='Optional.')
+
+    class Meta(UserCreationForm.Meta):
+        fields = ('username', 'email')
 
 
 class CVUploadForm(forms.Form):
     file = forms.FileField(
         label='CV (PDF or DOCX)',
         help_text=f'Maximum {MAX_FILE_SIZE // (1024 * 1024)} MB. PDF or DOCX only.',
+        widget=forms.ClearableFileInput(attrs={'accept': '.pdf,.docx'}),
     )
 
     def clean_file(self):
@@ -36,6 +45,7 @@ class MatchFilterForm(forms.Form):
     countries = forms.CharField(
         required=False, max_length=100, label='Countries I can work in',
         help_text='Comma-separated ISO codes, e.g. KE,GB. Leave blank for anywhere.',
+        widget=forms.TextInput(attrs={'placeholder': 'KE, GB'}),
     )
 
     def clean_countries(self):

@@ -1,0 +1,22 @@
+{% if gaps %}
+  <section class="card border-accent-200">
+    <h2 class="font-semibold text-slate-900">Your biggest gaps</h2>
+    <p class="muted mt-1">Required skills you don’t list, by how many of your top {{ results|length }} matches ask for them.</p>
+    <ul class="mt-4 space-y-2">
+      {% for name, count in gaps %}
+        <li class="flex items-center gap-4 text-sm">
+          <span class="w-32 shrink-0 font-medium text-accent-800">{{ name }}</span>
+          <span class="h-2 flex-1 rounded-full bg-slate-100" aria-hidden="true">
+            <span class="block h-2 rounded-full bg-accent-500" style="width: {% widthratio count results|length 100 %}%"></span>
+          </span>
+          <span class="w-24 shrink-0 text-right text-slate-600">{{ count }} of {{ results|length }}</span>
+        </li>
+      {% endfor %}
+    </ul>
+  </section>
+{% else %}
+  <section class="card">
+    <h2 class="font-semibold text-slate-900">No gaps</h2>
+    <p class="muted mt-1">You have every required skill for all of these matches.</p>
+  </section>
+{% endif %}

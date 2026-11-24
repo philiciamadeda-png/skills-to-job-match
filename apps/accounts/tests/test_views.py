@@ -81,7 +81,7 @@ GOOD_PROFILE = {'skills': ['Python', 'Django', 'Postgres'], 'seniority': 'senior
 def test_login_required(client, db):
     resp = client.get(reverse('accounts:upload'))
     assert resp.status_code == 302
-    assert '/admin/login/' in resp['Location']
+    assert resp['Location'].startswith(reverse('login'))
 
 
 def test_other_users_cv_is_404(logged_in, db):
@@ -121,12 +121,41 @@ def test_match_detail_shows_explanation_and_breakdown(logged_in, jobs):
     cv = CV.objects.get()
     explanation = ('You have three of the four required skills for this Remote Backend Engineer role, '
                    'and the level matches yours. The one gap is Kubernetes.')
-    with patch('apps.intelligence.explain.LLMClient', return_value=_llm(explanation)):
-        page = logged_in.get(reverse('accounts:match_detail', args=[cv.pk, jobs['remote'].pk])).content.decode()
+    args = [cv.pk, jobs['remote'].pk]
 
-    assert explanation in page
+    # The page itself renders without calling the model…
+    with patch('apps.intelligence.explain.LLMClient') as llm:
+        page = logged_in.get(reverse('accounts:match_detail', args=args)).content.decode()
+    llm.assert_not_called()
     assert 'required_skill' in page and 'seniority' in page
     assert 'Kubernetes' in page
+    assert reverse('accounts:match_explanation', args=args) in page     # …and asks for the explanation
+
+    with patch('apps.intelligence.explain.LLMClient', return_value=_llm(explanation)):
+        fragment = logged_in.get(reverse('accounts:match_explanation', args=args)).content.decode()
+    assert explanation in fragment
+    assert '<html' not in fragment
+
+
+def test_match_explanation_respects_ownership_and_filters(logged_in, jobs):
+    _upload(logged_in, _docx(CV_TEXT), GOOD_PROFILE)
+    cv = CV.objects.get()
+    url = reverse('accounts:match_explanation', args=[cv.pk, jobs['onsite'].pk])
+    assert logged_in.get(url + '?remote_only=on').status_code == 404
+
+    other = get_user_model().objects.create_user(username='bob', password='pw')
+    logged_in.force_login(other)
+    assert logged_in.get(url).status_code == 404
+
+
+def test_bad_country_filter_is_explained_in_the_htmx_results(logged_in, jobs):
+    _upload(logged_in, _docx(CV_TEXT), GOOD_PROFILE)
+    cv = CV.objects.get()
+    page = logged_in.get(reverse('accounts:matches', args=[cv.pk]), {'countries': 'Kenya'},
+                         HTTP_HX_REQUEST='true').content.decode()
+    assert 'Filters not applied' in page
+    assert 'two-letter country codes' in page
+    assert 'Remote Backend Engineer' in page                         # results still shown, unfiltered
 
 
 def test_match_detail_respects_filters(logged_in, jobs):

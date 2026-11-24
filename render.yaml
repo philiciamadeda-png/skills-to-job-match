@@ -1,0 +1,90 @@
+# Render Blueprint: the whole production setup in one file.
+# Render → New → Blueprint → pick this repo. See docs/deployment.md.
+#
+# One Docker image (./Dockerfile), three processes:
+#   skills-web     gunicorn            — serves pages; runs migrations before each deploy
+#   skills-worker  celery worker       — ingest, transform, extraction, embedding, aggregates
+#   skills-beat    celery beat         — the scheduler; exactly one instance, ever
+# Plus Postgres (with pgvector) and a Redis-compatible Key Value store.
+#
+# Cost (Hobby workspace): web, worker and beat $7 each + Postgres $6; Key Value free ≈ $27/month.
+
+databases:
+  - name: skills-db
+    plan: 0.1c-256mb
+    region: frankfurt
+    postgresMajorVersion: "16"          # same major version as local docker-compose (pgvector/pgvector:pg16)
+    ipAllowList: []                     # only services in this workspace can connect
+
+services:
+  - type: keyvalue
+    name: skills-redis
+    plan: free                          # 25 MB, in memory only — fine for a queue, locks and a small cache
+    region: frankfurt
+    ipAllowList: []
+    # It's the Celery broker: when full, refuse new keys rather than silently
+    # evicting queued tasks (the default, allkeys-lru, drops them).
+    maxmemoryPolicy: noeviction
+
+  - type: web
+    name: skills-web
+    runtime: docker
+    plan: 0.5c-512mb
+    region: frankfurt
+    healthCheckPath: /healthz/
+    # Runs in the new image after the build and before traffic moves to it.
+    # If it fails, the deploy stops and the old version keeps serving.
+    preDeployCommand: python manage.py migrate --noinput && python manage.py seed_skills
+    envVars:
+      - fromGroup: skills-shared
+      - key: DATABASE_URL
+        fromDatabase: { name: skills-db, property: connectionString }
+      - key: REDIS_URL
+        fromService: { type: keyvalue, name: skills-redis, property: connectionString }
+      - key: WEB_CONCURRENCY             # gunicorn worker processes; 1 × 2 threads fits 512 MB
+        value: "1"
+
+  - type: worker
+    name: skills-worker
+    runtime: docker
+    plan: 0.5c-512mb
+    region: frankfurt
+    dockerCommand: celery -A config worker --loglevel INFO --concurrency 2
+    maxShutdownDelaySeconds: 120         # let a running task finish on redeploy
+    envVars:
+      - fromGroup: skills-shared
+      - key: DATABASE_URL
+        fromDatabase: { name: skills-db, property: connectionString }
+      - key: REDIS_URL
+        fromService: { type: keyvalue, name: skills-redis, property: connectionString }
+
+  - type: worker
+    name: skills-beat
+    runtime: docker
+    plan: 0.5c-512mb
+    region: frankfurt
+    # Never scale beyond 1: two beats send every scheduled task twice.
+    numInstances: 1
+    dockerCommand: celery -A config beat --loglevel INFO --schedule /tmp/celerybeat-schedule
+    envVars:
+      - fromGroup: skills-shared
+      - key: DATABASE_URL
+        fromDatabase: { name: skills-db, property: connectionString }
+      - key: REDIS_URL
+        fromService: { type: keyvalue, name: skills-redis, property: connectionString }
+
+envVarGroups:
+  - name: skills-shared
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true             # same random value for all three services
+      - key: OPENAI_API_KEY
+        sync: false                     # Render asks for it when you create the Blueprint
+      - key: LLM_BASE_URL
+        value: https://api.openai.com/v1
+      - key: LLM_MODEL
+        value: gpt-4o-mini
+      - key: EMBED_MODEL
+        value: text-embedding-3-small
+      - key: EMBED_DIMENSIONS             # Job.embedding is vector(768)
+        value: "768"

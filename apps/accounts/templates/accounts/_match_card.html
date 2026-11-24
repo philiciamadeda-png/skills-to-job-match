@@ -1,0 +1,47 @@
+{% load ui %}
+<li class="card">
+  <div class="flex items-start justify-between gap-4">
+    <div>
+      <p class="muted">#{{ rank }}</p>
+      <h3 class="font-semibold">
+        <a href="{% url 'accounts:match_detail' cv.pk r.job.pk %}{{ filter_query }}">{{ r.job.title }}</a>
+      </h3>
+      <p class="muted">
+        {{ r.job.company.name|default:"Company not stated" }}{% if r.job.location and r.job.location.raw_text %} · {{ r.job.location.raw_text }}{% endif %}{% if r.job.extracted_remote_status and r.job.extracted_remote_status != "not_stated" %} · {{ r.job.extracted_remote_status|work_mode_label }}{% endif %}
+      </p>
+    </div>
+    <div class="w-24 shrink-0 text-right">
+      <p class="text-2xl font-semibold text-slate-900">{{ r.total_score|floatformat:2 }}</p>
+      <p class="muted">match score</p>
+      <div class="mt-2 h-1.5 rounded-full bg-slate-100" aria-hidden="true">
+        <div class="h-1.5 rounded-full bg-primary-600" style="width: {{ r.total_score|percent }}%"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mt-4 grid gap-4 text-sm sm:grid-cols-2">
+    <div>
+      <p class="font-medium text-slate-700">
+        {% if r.required_total %}{{ r.matched_required|length }} of {{ r.required_total }} required skills{% else %}No required skills listed{% endif %}
+      </p>
+      {% if r.matched_required %}
+        <div class="mt-2 flex flex-wrap gap-2">{% for s in r.matched_required %}<span class="chip">✓ {{ s }}</span>{% endfor %}</div>
+      {% endif %}
+      {% if r.missing_required %}
+        <p class="gap-text mt-2">✗ missing: {{ r.missing_required|slice:":6"|join:", " }}{% if r.missing_required|length > 6 %} and {{ r.missing_required|length|add:"-6" }} more{% endif %}</p>
+      {% endif %}
+      {% if r.matched_nice %}
+        <p class="muted mt-2">Nice-to-have you have: {{ r.matched_nice|join:", " }}</p>
+      {% endif %}
+    </div>
+    <div>
+      <p class="font-medium text-slate-700">Level</p>
+      <p class="mt-1 text-slate-600">Role {{ r.job.seniority|seniority_label|lower }}, you {{ r.profile_seniority|seniority_label|lower }}</p>
+      {% if r.seniority_gap > 0 %}
+        <p class="mt-1 text-slate-600">Role is {{ r.seniority_gap }} level{{ r.seniority_gap|pluralize }} below you</p>
+      {% elif r.seniority_gap < 0 %}
+        <p class="gap-text mt-1">Role is {{ r.seniority_gap|stringformat:"d"|cut:"-" }} level{{ r.seniority_gap|stringformat:"d"|cut:"-"|pluralize }} above you</p>
+      {% endif %}
+    </div>
+  </div>
+</li>
