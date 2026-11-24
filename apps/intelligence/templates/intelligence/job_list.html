@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Jobs{% endblock %}
+
+{% block content %}
+<div class="mb-6">
+  <h1 class="text-2xl font-semibold text-slate-900">Jobs</h1>
+  <p class="muted">Search and filter every job we track. Duplicates posted on more than one board are shown once.</p>
+</div>
+
+{# Any change re-fetches just the results; the URL updates so a filtered list can be shared. #}
+<form method="get" action="{% url 'jobs:list' %}" class="card grid gap-4 sm:grid-cols-2 lg:grid-cols-5"
+      hx-get="{% url 'jobs:list' %}" hx-target="#job-results" hx-push-url="true"
+      hx-trigger="input delay:300ms, change, submit" hx-indicator="#job-results">
+  <div class="sm:col-span-2">{% include "partials/_field.html" with field=form.q %}</div>
+  {% include "partials/_field.html" with field=form.seniority %}
+  {% include "partials/_field.html" with field=form.work_mode %}
+  {% include "partials/_field.html" with field=form.source %}
+  <noscript><button type="submit" class="btn">Apply filters</button></noscript>
+</form>
+
+<div id="job-results" class="swap-target mt-6" aria-live="polite">
+  {% include "intelligence/_job_results.html" %}
+</div>
+{% endblock %}

@@ -73,14 +73,17 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+# Built Tailwind CSS and vendored HTMX / Chart.js
+STATICFILES_DIRS = [BASE_DIR / 'static']
 
 MEDIA_URL = 'media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# No sign-up flow yet — sign in through the admin login page
-LOGIN_URL = 'admin:login'
+LOGIN_URL = 'login'
+LOGIN_REDIRECT_URL = 'accounts:profile'
+LOGOUT_REDIRECT_URL = 'analytics:dashboard'
 
 # LLM
 OPENAI_API_KEY = env("OPENAI_API_KEY", default="")

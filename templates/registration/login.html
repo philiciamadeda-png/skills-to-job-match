@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Log in{% endblock %}
+
+{% block content %}
+<div class="mx-auto max-w-md">
+  <div class="card">
+    <h1 class="text-xl font-semibold text-slate-900">Log in</h1>
+    <p class="muted mt-1">To match your CV and see your saved matches.</p>
+
+    {% if form.non_field_errors %}
+      <p class="mt-4 rounded-md border border-accent-200 bg-accent-50 px-4 py-2 text-sm text-accent-800">
+        That username and password don’t match. Please try again.
+      </p>
+    {% endif %}
+
+    <form method="post" class="mt-6 space-y-4">
+      {% csrf_token %}
+      {% include "partials/_field.html" with field=form.username %}
+      {% include "partials/_field.html" with field=form.password %}
+      <input type="hidden" name="next" value="{{ next }}">
+      <button type="submit" class="btn w-full">Log in</button>
+    </form>
+  </div>
+  <p class="muted mt-4 text-center">New here? <a href="{% url 'accounts:signup' %}">Create an account</a></p>
+</div>
+{% endblock %}

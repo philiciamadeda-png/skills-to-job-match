@@ -1,0 +1,8 @@
+<section class="card" aria-labelledby="{{ id }}-q">
+  <h2 id="{{ id }}-q" class="font-semibold text-slate-900">{{ question }}</h2>
+  {% if answer %}<p class="mt-1 text-sm text-slate-700">{{ answer }}</p>{% endif %}
+  <div class="relative mt-4 h-72">
+    <canvas id="{{ id }}" role="img" aria-label="{{ question }} {{ answer }}"></canvas>
+  </div>
+  {% if note %}<p class="muted mt-2">{{ note }}</p>{% endif %}
+</section>

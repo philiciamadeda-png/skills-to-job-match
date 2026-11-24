@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="mb-8 flex flex-wrap items-end justify-between gap-4">
+  <div>
+    <h1 class="text-2xl font-semibold text-slate-900">The job market at a glance</h1>
+    <p class="muted">Remote and European tech jobs we track, duplicates removed.</p>
+  </div>
+  {% if totals %}<p class="muted">Updated {{ totals.refreshed_at|timesince }} ago</p>{% endif %}
+</div>
+
+{% if not totals %}
+  <div class="card text-center">
+    <p class="font-medium text-slate-900">No numbers yet.</p>
+    <p class="muted mt-2">The dashboard fills in after the first refresh: <code>python manage.py refresh_aggregates</code>.</p>
+  </div>
+{% else %}
+  <dl class="grid grid-cols-2 gap-6 lg:grid-cols-4">
+    {% include "analytics/_stat.html" with label="Jobs tracked" value=totals.jobs_tracked %}
+    {% include "analytics/_stat.html" with label="Companies hiring" value=totals.companies %}
+    {% include "analytics/_stat.html" with label="Distinct skills asked for" value=totals.distinct_skills %}
+    {% include "analytics/_stat.html" with label="New in the last 7 days" value=new_this_week %}
+  </dl>
+
+  <div class="mt-6 grid gap-6 lg:grid-cols-2">
+    {% include "analytics/_chart.html" with id="chart-top-skills" question="Which skills are employers asking for most?" answer=answers.top_skills note="Top 10 skills, all jobs tracked." %}
+    {% include "analytics/_chart.html" with id="chart-trend" question="Is demand for those skills rising or falling?" answer=answers.trend note=trend_note %}
+    {% include "analytics/_chart.html" with id="chart-seniority" question="What level are employers hiring at?" answer=answers.seniority note="All jobs tracked." %}
+    {% include "analytics/_chart.html" with id="chart-work-mode" question="How many roles can be done remotely?" answer=answers.work_mode note="As stated in the job description, or a remote location." %}
+  </div>
+
+  {{ charts|json_script:"chart-data" }}
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+  {% if totals %}
+    <script src="{% static 'vendor/chart-4.6.2.umd.min.js' %}"></script>
+    <script src="{% static 'js/dashboard.js' %}"></script>
+  {% endif %}
+{% endblock %}

@@ -1,0 +1,91 @@
+/*
+ * Tailwind source. Build with:
+ *   tailwindcss -i static/src/app.css -o static/css/app.css --minify
+ *
+ * Three colours only. The default palette is switched off below, so any other
+ * colour class simply doesn't exist:
+ *   primary (indigo) — actions, links, chart bars, matched skills
+ *   slate            — text, borders, backgrounds
+ *   accent (amber)   — gaps only: missing skills, roles above your level
+ *
+ * Spacing: 2 / 4 / 6 / 8 (0.5rem steps). Cards are p-6, gaps between cards are gap-6.
+ */
+@import "tailwindcss";
+
+@source "../../templates";
+@source "../../apps";
+
+@theme static {
+  --color-*: initial;
+  --color-white: #ffffff;
+
+  --color-primary-50: #eef2ff;
+  --color-primary-100: #e0e7ff;
+  --color-primary-200: #c7d2fe;
+  --color-primary-300: #a5b4fc;
+  --color-primary-400: #818cf8;
+  --color-primary-500: #6366f1;
+  --color-primary-600: #4f46e5;
+  --color-primary-700: #4338ca;
+  --color-primary-800: #3730a3;
+  --color-primary-900: #312e81;
+
+  --color-slate-50: #f8fafc;
+  --color-slate-100: #f1f5f9;
+  --color-slate-200: #e2e8f0;
+  --color-slate-300: #cbd5e1;
+  --color-slate-400: #94a3b8;
+  --color-slate-500: #64748b;
+  --color-slate-600: #475569;
+  --color-slate-700: #334155;
+  --color-slate-800: #1e293b;
+  --color-slate-900: #0f172a;
+
+  --color-accent-50: #fffbeb;
+  --color-accent-100: #fef3c7;
+  --color-accent-200: #fde68a;
+  --color-accent-500: #f59e0b;
+  --color-accent-600: #d97706;
+  --color-accent-700: #b45309;
+  --color-accent-800: #92400e;
+}
+
+@layer base {
+  /* Django renders its own widgets; style them here so forms need no per-field classes */
+  input[type="text"], input[type="email"], input[type="password"], input[type="search"],
+  input[type="file"], select {
+    @apply block w-full rounded-md border border-slate-300 bg-white px-4 py-2 text-sm text-slate-900
+           focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-200;
+  }
+  input[type="file"] {
+    @apply file:mr-4 file:rounded-md file:border-0 file:bg-primary-50 file:px-4 file:py-2
+           file:text-sm file:font-medium file:text-primary-700 hover:file:bg-primary-100;
+  }
+  input[type="checkbox"] {
+    @apply size-4 rounded border-slate-300 accent-primary-600;
+  }
+  label {
+    @apply text-sm font-medium text-slate-700;
+  }
+  a {
+    @apply text-primary-700 hover:text-primary-900;
+  }
+}
+
+@layer components {
+  .card { @apply rounded-lg border border-slate-200 bg-white p-6 shadow-sm; }
+  .btn { @apply inline-flex items-center justify-center gap-2 rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 disabled:opacity-60; }
+  .btn:hover { color: var(--color-white); }
+  .btn-secondary { @apply inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50; }
+  .chip { @apply inline-flex items-center rounded-full bg-primary-50 px-2 py-0.5 text-xs font-medium text-primary-800; }
+  .chip-gap { @apply inline-flex items-center rounded-full bg-accent-100 px-2 py-0.5 text-xs font-medium text-accent-800; }
+  .chip-muted { @apply inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600; }
+  .muted { @apply text-sm text-slate-500; }
+  .gap-text { @apply text-accent-700; }
+  .errorlist { @apply mt-1 text-sm text-accent-700; }
+  .helptext { @apply mt-1 block text-xs text-slate-500; }
+
+  .htmx-indicator { @apply opacity-0 transition-opacity; }
+  .htmx-request .htmx-indicator, .htmx-request.htmx-indicator { @apply opacity-100; }
+  .htmx-request.swap-target, .htmx-request .swap-target { @apply opacity-50 transition-opacity; }
+}

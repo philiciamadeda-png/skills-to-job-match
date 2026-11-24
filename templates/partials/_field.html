@@ -1,0 +1,15 @@
+{# One form field: label, widget, help text, errors. Usage: include "partials/_field.html" with field=form.x #}
+{% if field.field.widget.input_type == "checkbox" %}
+  <div>
+    <label class="flex items-center gap-2">{{ field }} {{ field.label }}</label>
+    {% if field.help_text %}<span class="helptext">{{ field.help_text|safe }}</span>{% endif %}
+    {{ field.errors }}
+  </div>
+{% else %}
+  <div class="space-y-1">
+    <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+    {{ field }}
+    {% if field.help_text %}<span class="helptext">{{ field.help_text|safe }}</span>{% endif %}
+    {{ field.errors }}
+  </div>
+{% endif %}

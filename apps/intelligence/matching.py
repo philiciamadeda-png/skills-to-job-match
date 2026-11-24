@@ -114,6 +114,10 @@ class MatchResult:
     profile_seniority: str = ''           # candidate level the seniority score was computed from
 
     @property
+    def required_total(self) -> int:
+        return len(self.matched_required) + len(self.missing_required)
+
+    @property
     def components(self) -> dict[str, float]:
         """Raw 0–1 score per component."""
         return {
@@ -294,3 +298,15 @@ def match_profile(
 
     results.sort(key=lambda r: (-r.total_score, r.job.pk))
     return results[:limit]
+
+
+def common_gaps(results: list[MatchResult], limit: int = 5) -> list[tuple[str, int]]:
+    """
+    Required skills missing most often across these matches, as (skill, count),
+    most frequent first. Learning the top one closes a gap in the most jobs.
+    """
+    counts: dict[str, int] = {}
+    for r in results:
+        for name in r.missing_required:
+            counts[name] = counts.get(name, 0) + 1
+    return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:limit]

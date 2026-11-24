@@ -7,7 +7,8 @@ number of jobs.
 """
 from datetime import date, timedelta
 
-from django.db.models import Sum
+from django.db.models import Max, Sum
+from django.db.models.functions import TruncWeek
 
 from apps.analytics.models import (
     HeadlineTotals,
@@ -54,6 +55,38 @@ def skill_trend(skill_ids, days: int = 30) -> dict[int, list[tuple[date, int]]]:
     for skill_id, day, n in qs:
         trend[skill_id].append((day, n))
     return trend
+
+
+def weekly_skill_trend(skill_ids, weeks: int = 12) -> tuple[list[date], dict[int, list[int]]]:
+    """
+    Jobs per week for each skill over the `weeks` weeks up to the latest
+    posting day in the data (not today, so a pause in ingestion doesn't
+    leave the chart empty). Returns (week start dates, {skill_id: counts}).
+    """
+    latest = DailySkillCount.objects.aggregate(latest=Max('day'))['latest']
+    if latest is None:
+        return [], {pk: [] for pk in skill_ids}
+    last_week = latest - timedelta(days=latest.weekday())
+    week_starts = [last_week - timedelta(weeks=n) for n in range(weeks - 1, -1, -1)]
+
+    series = {pk: [0] * weeks for pk in skill_ids}
+    rows = (
+        DailySkillCount.objects
+        .filter(skill_id__in=skill_ids, day__gte=week_starts[0], day__lte=latest)
+        .annotate(week=TruncWeek('day'))
+        .values('skill_id', 'week')
+        .annotate(jobs=Sum('job_count'))
+    )
+    index = {w: i for i, w in enumerate(week_starts)}
+    for r in rows:
+        week = r['week'].date() if hasattr(r['week'], 'date') else r['week']
+        series[r['skill_id']][index[week]] = r['jobs']
+    return week_starts, series
+
+
+def new_jobs(days: int = 7) -> int:
+    """Jobs posted in the last `days` days, all sources."""
+    return _since(DailySourceCount.objects, days).aggregate(n=Sum('job_count'))['n'] or 0
 
 
 def _breakdown(model, field: str, days: int | None) -> dict[str, int]:

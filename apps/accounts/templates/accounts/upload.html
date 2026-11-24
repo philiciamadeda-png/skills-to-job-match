@@ -1,25 +1,55 @@
-{% extends "accounts/base.html" %}
+{% extends "base.html" %}
+{% block title %}Match my CV{% endblock %}
+
 {% block content %}
-<h1>Upload your CV</h1>
+<div class="grid gap-6 lg:grid-cols-3">
+  <section class="card lg:col-span-2">
+    <h1 class="text-2xl font-semibold text-slate-900">Match your CV to jobs</h1>
+    <p class="muted mt-1">We read the skills and level from your CV, then rank every job by how well you fit, and show what’s missing.</p>
 
-{% if form.non_field_errors %}
-  {% for e in form.non_field_errors %}<p class="error">{{ e }}</p>{% endfor %}
-{% endif %}
-
-<form method="post" enctype="multipart/form-data">
-  {% csrf_token %}
-  {{ form.as_p }}
-  <button type="submit">Upload and match</button>
-</form>
-<p class="muted">Reading and analysing a CV takes a few seconds. Only the text is kept, not the file.</p>
-
-{% if previous %}
-  <h2>Your CVs</h2>
-  <ul>
-    {% for cv in previous %}
-      <li><a href="{% url 'accounts:matches' cv.pk %}">{{ cv.original_filename }}</a>
-        <span class="muted">uploaded {{ cv.created_at|date:"Y-m-d H:i" }}</span></li>
+    {% for e in form.non_field_errors %}
+      <p class="mt-4 rounded-md border border-accent-200 bg-accent-50 px-4 py-2 text-sm text-accent-800">{{ e }}</p>
     {% endfor %}
-  </ul>
-{% endif %}
+
+    <form method="post" enctype="multipart/form-data" class="mt-6 space-y-6" id="upload-form">
+      {% csrf_token %}
+      {% include "partials/_field.html" with field=form.file %}
+      <fieldset class="grid gap-4 sm:grid-cols-2">
+        <legend class="mb-2 text-sm font-semibold text-slate-900">Only show jobs I can take</legend>
+        {% include "partials/_field.html" with field=form.remote_only %}
+        {% include "partials/_field.html" with field=form.countries %}
+      </fieldset>
+      <div class="flex items-center gap-4">
+        <button type="submit" class="btn">Upload and match</button>
+        <p class="muted" id="upload-status" hidden>Reading and analysing your CV — this takes a few seconds…</p>
+      </div>
+    </form>
+    <p class="muted mt-6">Only the text is kept, not the file.</p>
+  </section>
+
+  <aside class="card">
+    <h2 class="font-semibold text-slate-900">Your CVs</h2>
+    {% if previous %}
+      <ul class="mt-4 space-y-2">
+        {% for cv in previous %}
+          <li>
+            <a href="{% url 'accounts:matches' cv.pk %}">{{ cv.original_filename }}</a>
+            <span class="muted block">uploaded {{ cv.created_at|date:"j M Y, H:i" }}</span>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="muted mt-2">None yet. Your uploads appear here.</p>
+    {% endif %}
+  </aside>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.getElementById('upload-form').addEventListener('submit', (e) => {
+    e.target.querySelector('button[type=submit]').disabled = true;
+    document.getElementById('upload-status').hidden = false;
+  });
+</script>
 {% endblock %}

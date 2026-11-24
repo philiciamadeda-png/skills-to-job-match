@@ -1,0 +1,17 @@
+{# Swapped by HTMX when the filters change. #}
+{% if message %}
+  <div class="card border-accent-200 bg-accent-50">
+    <p class="text-sm text-accent-800">{{ message }}</p>
+  </div>
+{% endif %}
+
+{% if results %}
+  {% include "accounts/_gaps.html" %}
+
+  <p class="muted mt-6 mb-4">Top {{ results|length }} match{{ results|length|pluralize:"es" }}, best first. Open one to see how its score was built.</p>
+  <ol class="space-y-4">
+    {% for r in results %}
+      {% include "accounts/_match_card.html" with rank=forloop.counter %}
+    {% endfor %}
+  </ol>
+{% endif %}

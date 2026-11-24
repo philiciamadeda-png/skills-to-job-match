@@ -1,0 +1,16 @@
+{% load ui %}
+<section class="card">
+  <h2 class="font-semibold text-slate-900">What we read from your CV</h2>
+  {% if profile %}
+    <dl class="mt-4 grid grid-cols-2 gap-4 text-sm">
+      <div><dt class="muted">Level</dt><dd class="font-medium text-slate-900">{{ profile.seniority|seniority_label }}</dd></div>
+      <div><dt class="muted">Experience</dt><dd class="font-medium text-slate-900">{% if profile.years_experience is not None %}{{ profile.years_experience }} year{{ profile.years_experience|pluralize }}{% else %}Not stated{% endif %}</dd></div>
+    </dl>
+    <p class="muted mt-4">Skills found</p>
+    <div class="mt-2 flex flex-wrap gap-2">
+      {% for s in skills %}<span class="chip">{{ s }}</span>{% empty %}<span class="muted">None</span>{% endfor %}
+    </div>
+  {% else %}
+    <p class="muted mt-2">We couldn’t analyse this CV.</p>
+  {% endif %}
+</section>

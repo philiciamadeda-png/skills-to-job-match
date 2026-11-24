@@ -1,0 +1,26 @@
+{% load static %}<!doctype html>
+<html lang="en" class="h-full bg-slate-50">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Skills to Job Match{% endblock %} · Skills to Job Match</title>
+  <link rel="stylesheet" href="{% static 'css/app.css' %}">
+  <script src="{% static 'vendor/htmx-2.0.11.min.js' %}" defer></script>
+  {% block head %}{% endblock %}
+</head>
+<body class="flex min-h-full flex-col text-slate-800" hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
+  {% include "partials/_nav.html" %}
+
+  <main class="mx-auto w-full max-w-6xl flex-1 px-4 py-8 sm:px-6">
+    {% include "partials/_messages.html" %}
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="border-t border-slate-200 bg-white">
+    <div class="mx-auto max-w-6xl px-4 py-4 text-xs text-slate-500 sm:px-6">
+      Jobs from Remotive and Arbeitnow. Your CV file is never stored, only the text read from it.
+    </div>
+  </footer>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,36 +1,98 @@
-{% extends "accounts/base.html" %}
+{% extends "base.html" %}
+{% load ui %}
 {% block title %}{{ r.job.title }}{% endblock %}
+
 {% block content %}
-<p><a href="{% url 'accounts:matches' cv.pk %}{{ filter_query }}">← back to matches</a></p>
+<p class="muted"><a href="{% url 'accounts:matches' cv.pk %}{{ filter_query }}">← Back to matches</a></p>
 
-<h1>{{ r.job.title }}</h1>
-<p class="muted">
-  {{ r.job.company.name|default:"—" }}{% if r.job.location %} · {{ r.job.location.raw_text }}{% endif %}
-  {% if r.job.external_url %} · <a href="{{ r.job.external_url }}" rel="noopener noreferrer" target="_blank">original posting</a>{% endif %}
-</p>
+<div class="mt-2 mb-6 flex flex-wrap items-start justify-between gap-4">
+  <div>
+    <h1 class="text-2xl font-semibold text-slate-900">{{ r.job.title }}</h1>
+    <p class="muted">
+      {{ r.job.company.name|default:"Company not stated" }}{% if r.job.location and r.job.location.raw_text %} · {{ r.job.location.raw_text }}{% endif %}
+      {% if r.job.external_url %} · <a href="{{ r.job.external_url }}" rel="noopener noreferrer" target="_blank">Original posting ↗</a>{% endif %}
+    </p>
+  </div>
+  <div class="text-right">
+    <p class="text-3xl font-semibold text-slate-900">{{ r.total_score|floatformat:2 }}</p>
+    <p class="muted">match score (0–1)</p>
+  </div>
+</div>
 
-<h2>Why this match</h2>
-<p>{{ explanation }}</p>
-<p class="muted">
-  {% if explanation_source == "llm" %}Written by the language model from the facts below.
-  {% else %}Generated from the facts below (the language model's answer wasn't used).{% endif %}
-</p>
+<div class="grid gap-6 lg:grid-cols-3">
+  <div class="space-y-6 lg:col-span-2">
+    <section class="card">
+      <h2 class="font-semibold text-slate-900">Why this match</h2>
+      <p class="mt-2 text-slate-700">{{ explanation }}</p>
+      <p class="muted mt-2">
+        {% if explanation_source == "llm" %}Written by the language model from the facts on this page.
+        {% else %}Generated from the facts on this page (the language model’s answer wasn’t used).{% endif %}
+      </p>
+    </section>
 
-<h2>Score: {{ r.total_score|floatformat:2 }}</h2>
-<table>
-  <thead><tr><th>Component</th><th>Score (0–1)</th><th>Weight</th><th>Contribution</th></tr></thead>
-  <tbody>
-  {% for name, score, weight, contribution in rows %}
-    <tr><td>{{ name }}</td><td>{{ score|floatformat:2 }}</td><td>{{ weight|floatformat:2 }}</td><td>{{ contribution|floatformat:3 }}</td></tr>
-  {% endfor %}
-  </tbody>
-</table>
+    <section class="card">
+      <h2 class="font-semibold text-slate-900">How the score was built</h2>
+      <p class="muted mt-1">Each part is scored 0–1, then weighted. The contributions add up to the match score.</p>
+      <table class="mt-4 w-full text-sm">
+        <thead>
+          <tr class="border-b border-slate-200 text-left text-slate-500">
+            <th class="py-2 font-medium">Part</th>
+            <th class="py-2 font-medium">Score</th>
+            <th class="py-2 text-right font-medium">Weight</th>
+            <th class="py-2 text-right font-medium">Contribution</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for key, label, score, weight, contribution in rows %}
+            <tr class="border-b border-slate-100" data-component="{{ key }}">
+              <td class="py-2 font-medium text-slate-700">{{ label }}</td>
+              <td class="py-2">
+                <div class="flex items-center gap-2">
+                  <span class="h-1.5 w-24 rounded-full bg-slate-100" aria-hidden="true">
+                    <span class="block h-1.5 rounded-full bg-primary-600" style="width: {{ score|percent }}%"></span>
+                  </span>
+                  {{ score|floatformat:2 }}
+                </div>
+              </td>
+              <td class="py-2 text-right text-slate-600">× {{ weight|floatformat:2 }}</td>
+              <td class="py-2 text-right font-medium text-slate-900">{{ contribution|floatformat:3 }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colspan="3" class="py-2 text-right text-slate-500">Match score</td>
+            <td class="py-2 text-right font-semibold text-slate-900">{{ r.total_score|floatformat:2 }}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </section>
+  </div>
 
-<h2>Facts</h2>
-<ul>
-  <li>Your level: {{ profile.seniority|default:"not stated" }} · role level: {{ r.job.seniority|default:"not stated" }} · gap: {{ r.seniority_gap|stringformat:"+d" }} (positive = role below you)</li>
-  <li>Required skills you have: {{ r.matched_required|join:", "|default:"none" }}</li>
-  <li class="error">Required skills missing: {{ r.missing_required|join:", "|default:"none" }}</li>
-  <li>Nice-to-have skills you have: {{ r.matched_nice|join:", "|default:"none" }}</li>
-</ul>
+  <aside class="card h-fit space-y-4 text-sm">
+    <h2 class="font-semibold text-slate-900">The facts</h2>
+    <div>
+      <p class="muted">Required skills you have</p>
+      <div class="mt-2 flex flex-wrap gap-2">
+        {% for s in r.matched_required %}<span class="chip">✓ {{ s }}</span>{% empty %}<span class="text-slate-600">None</span>{% endfor %}
+      </div>
+    </div>
+    <div>
+      <p class="muted">Required skills missing</p>
+      <div class="mt-2 flex flex-wrap gap-2">
+        {% for s in r.missing_required %}<span class="chip-gap">✗ {{ s }}</span>{% empty %}<span class="text-slate-600">None</span>{% endfor %}
+      </div>
+    </div>
+    <div>
+      <p class="muted">Nice-to-have skills you have</p>
+      <p class="mt-1 text-slate-700">{{ r.matched_nice|join:", "|default:"None" }}</p>
+    </div>
+    <div>
+      <p class="muted">Level</p>
+      <p class="mt-1 text-slate-700">Role {{ r.job.seniority|seniority_label|lower }}, you {{ profile.seniority|seniority_label|lower }}</p>
+      {% if r.seniority_gap > 0 %}<p class="text-slate-600">Role is {{ r.seniority_gap }} level{{ r.seniority_gap|pluralize }} below you</p>
+      {% elif r.seniority_gap < 0 %}<p class="gap-text">Role is {{ r.seniority_gap|stringformat:"d"|cut:"-" }} level{{ r.seniority_gap|stringformat:"d"|cut:"-"|pluralize }} above you</p>{% endif %}
+    </div>
+  </aside>
+</div>
 {% endblock %}

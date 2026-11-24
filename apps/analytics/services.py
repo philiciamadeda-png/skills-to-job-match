@@ -9,7 +9,7 @@ rows until the transaction commits, so the dashboard is never empty mid-refresh.
 import logging
 
 from django.db import transaction
-from django.db.models import Case, CharField, Count, F, Q, Value, When
+from django.db.models import Count, F, Q
 from django.db.models.functions import Coalesce, TruncDate
 from django.utils import timezone
 
@@ -21,13 +21,9 @@ from apps.analytics.models import (
     DailyWorkModeCount,
 )
 from apps.intelligence.models import Job, JobSkill
-from apps.intelligence.schemas import RemoteStatus, Seniority
+from apps.intelligence.queries import seniority_expression, work_mode_expression
 
 logger = logging.getLogger(__name__)
-
-UNKNOWN = 'unknown'
-_LEVELS = [s.value for s in Seniority if s is not Seniority.NOT_STATED]
-_WORK_MODES = [s.value for s in RemoteStatus if s is not RemoteStatus.NOT_STATED]
 
 
 def _posted_day(prefix: str = ''):
@@ -41,21 +37,12 @@ def _jobs():
 
 
 def _seniority_rows() -> list[DailySeniorityCount]:
-    level = Case(When(seniority__in=_LEVELS, then=F('seniority')),
-                 default=Value(UNKNOWN), output_field=CharField())
-    qs = _jobs().annotate(level=level).values('day', 'level').annotate(n=Count('id'))
+    qs = _jobs().annotate(level=seniority_expression()).values('day', 'level').annotate(n=Count('id'))
     return [DailySeniorityCount(day=r['day'], seniority=r['level'], job_count=r['n']) for r in qs]
 
 
 def _work_mode_rows() -> list[DailyWorkModeCount]:
-    # The LLM's reading of the description wins; a "Remote" location is the fallback.
-    mode = Case(
-        When(extracted_remote_status__in=_WORK_MODES, then=F('extracted_remote_status')),
-        When(location__is_remote=True, then=Value(RemoteStatus.REMOTE.value)),
-        default=Value(UNKNOWN),
-        output_field=CharField(),
-    )
-    qs = _jobs().annotate(mode=mode).values('day', 'mode').annotate(n=Count('id'))
+    qs = _jobs().annotate(mode=work_mode_expression()).values('day', 'mode').annotate(n=Count('id'))
     return [DailyWorkModeCount(day=r['day'], work_mode=r['mode'], job_count=r['n']) for r in qs]
 
 

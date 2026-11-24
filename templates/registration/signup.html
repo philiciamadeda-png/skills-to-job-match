@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Sign up{% endblock %}
+
+{% block content %}
+<div class="mx-auto max-w-md">
+  <div class="card">
+    <h1 class="text-xl font-semibold text-slate-900">Create an account</h1>
+    <p class="muted mt-1">Free. Upload a CV and keep your matches in one place.</p>
+
+    {% for e in form.non_field_errors %}
+      <p class="mt-4 rounded-md border border-accent-200 bg-accent-50 px-4 py-2 text-sm text-accent-800">{{ e }}</p>
+    {% endfor %}
+
+    <form method="post" class="mt-6 space-y-4">
+      {% csrf_token %}
+      {% for field in form %}{% include "partials/_field.html" %}{% endfor %}
+      <button type="submit" class="btn w-full">Sign up</button>
+    </form>
+  </div>
+  <p class="muted mt-4 text-center">Already have an account? <a href="{% url 'login' %}">Log in</a></p>
+</div>
+{% endblock %}

@@ -81,7 +81,7 @@ GOOD_PROFILE = {'skills': ['Python', 'Django', 'Postgres'], 'seniority': 'senior
 def test_login_required(client, db):
     resp = client.get(reverse('accounts:upload'))
     assert resp.status_code == 302
-    assert '/admin/login/' in resp['Location']
+    assert resp['Location'].startswith(reverse('login'))
 
 
 def test_other_users_cv_is_404(logged_in, db):
