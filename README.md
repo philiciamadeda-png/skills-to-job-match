@@ -126,10 +126,8 @@ Open `.env` and set your values:
 | `POSTGRES_USER`     | Database user, e.g. `skills_user`                                 |
 | `POSTGRES_PASSWORD` | Database password                                                  |
 | `REDIS_URL`         | e.g. `redis://localhost:6379/0` (this is the default if unset)    |
-| `OPENAI_API_KEY`    | Leave unset locally (Ollama). In production: the tunnel gateway token, or an OpenAI key |
+| `OPENAI_API_KEY`    | Optional — leave unset to use local Ollama instead                |
 | `LLM_BASE_URL`      | LLM endpoint, default `http://localhost:11434/v1` (Ollama)        |
-| `LLM_MODEL`         | Default `llama3.2`                                                 |
-| `EMBED_BASE_URL`, `EMBED_MODEL`, `EMBED_DIMENSIONS` | Embeddings endpoint; defaults to Ollama `nomic-embed-text`. Set `EMBED_DIMENSIONS=768` only for OpenAI `text-embedding-3-small` |
 
 ### 4. Start PostgreSQL and Redis
 
@@ -1261,19 +1259,13 @@ pytest                                     # all 211
 
 ## Week 6 — Deployment (Task 3)
 
-The prompt is in [`week6_task3_prompt.md`](week6_task3_prompt.md). The full answer is **[`docs/deployment.md`](docs/deployment.md)**: production settings, static files, the Dockerfile, migrations, worker and beat, step-by-step first deploy, and a 32-item first-deploy error checklist.
+The prompt is in [`week6_task3_prompt.md`](week6_task3_prompt.md). The full answer is **[`docs/deployment.md`](docs/deployment.md)**: production settings, static files, the Dockerfile, migrations, worker and beat, step-by-step first deploy, and a 28-item first-deploy error checklist.
 
 **Host: Render.** A `render.yaml` Blueprint defines all five resources: Postgres with pgvector, a Key Value store (Redis-compatible), the gunicorn web service, the Celery worker and Celery beat. All three app processes run from one `Dockerfile`. Migrations run in `preDeployCommand`, so a failed migration stops the deploy while the old version keeps serving. About $27/month.
 
-**AI in production: the Ollama on your laptop**, through a Cloudflare quick tunnel. It's free, with the same models as local (`llama3.2`, `nomic-embed-text`).
-- **The gateway:** `scripts/ollama_gateway.py` sits in front of Ollama. It requires a secret token (the app sends it as `OPENAI_API_KEY`) and forwards only chat and embeddings.
-- **Running it:** `scripts/ai_tunnel.sh` starts the gateway and the tunnel and prints the `LLM_BASE_URL` to paste into Render.
-- **When the laptop is off:** the AI features pause, jobs stay pending, and nothing is lost.
-- **Switching to OpenAI later:** only environment variables change. See `docs/deployment.md` §8.
+**AI in production: not included.** The language models stay as they are locally (Ollama on `localhost:11434`, fixed in the code), which Render can't reach. The deployed site serves the dashboard, the job list, sign-up and the job pipeline. CV upload, skill extraction and embeddings fail safely with clear messages, and jobs stay pending. `docs/deployment.md` §8 explains what works and what adding a model later would take.
 
-The model and endpoint are now settings (`LLM_MODEL`, `EMBED_*`). Embeddings go through Ollama's OpenAI-style `/v1/embeddings`, which was checked to return identical vectors to the old `/api/embed`, so local development is unchanged.
-
-**New files:** `Dockerfile`, `.dockerignore`, `render.yaml`, `config/settings/production.py` (rewritten), `apps/core/middleware.py` (`/healthz/`), `scripts/ai_tunnel.sh` + `scripts/ollama_gateway.py`. The Tailwind source moved to `assets/tailwind.css`.
+**New files:** `Dockerfile`, `.dockerignore`, `render.yaml`, `config/settings/production.py` (rewritten), `apps/core/middleware.py` (`/healthz/`). The Tailwind source moved to `assets/tailwind.css`.
 
 **Verified** by building the production image locally and running web + worker + beat against an empty Postgres:
 - migrations and pgvector applied, and a second run changed nothing
@@ -1288,15 +1280,7 @@ Building the image also caught four real first-deploy errors, now fixed and list
 - `sh -c` without `exec` swallowing `SIGTERM`
 - a `SECRET_KEY` rule that would have rejected Render's generated key
 
-The tunnel was tested from the public internet:
-- no token or a wrong token → 401
-- Ollama's own API → 404
-- right token → chat and 768-dimension embeddings worked
-
-The production container used it to extract a real job ad in 52 s.
-
 ```bash
 docker build -t skills-to-job-match .                              # or: podman build
-scripts/ai_tunnel.sh --show-token                                   # on the laptop, while the site should have AI
-pytest apps/core/tests/test_deploy.py apps/core/tests/test_ollama_gateway.py -v
+pytest apps/core/tests/test_deploy.py -v                            # production settings + health check
 ```

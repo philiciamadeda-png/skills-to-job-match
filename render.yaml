@@ -6,6 +6,7 @@
 #   skills-worker  celery worker       — ingest, transform, extraction, embedding, aggregates
 #   skills-beat    celery beat         — the scheduler; exactly one instance, ever
 # Plus Postgres (with pgvector) and a Redis-compatible Key Value store.
+# Language models are not part of this deployment (docs/deployment.md §8).
 #
 # Cost (Hobby workspace): web, worker and beat $7 each + Postgres $6; Key Value free ≈ $27/month.
 
@@ -78,15 +79,5 @@ envVarGroups:
     envVars:
       - key: SECRET_KEY
         generateValue: true             # same random value for all three services
-      # AI: the Ollama on your laptop, reached through scripts/ai_tunnel.sh
-      # (docs/deployment.md §8). Render asks for both values when you create the Blueprint.
-      - key: LLM_BASE_URL
-        sync: false                     # the tunnel address + /v1, printed by scripts/ai_tunnel.sh
-      - key: OPENAI_API_KEY
-        sync: false                     # the gateway token: scripts/ai_tunnel.sh --show-token
-      - key: LLM_MODEL
-        value: llama3.2
-      - key: EMBED_MODEL
-        value: nomic-embed-text
-      # To use OpenAI instead: LLM_BASE_URL=https://api.openai.com/v1, OPENAI_API_KEY=sk-…,
-      # LLM_MODEL=gpt-4o-mini, EMBED_MODEL=text-embedding-3-small, EMBED_DIMENSIONS=768.
+      # No AI settings: the app's language models are Ollama on localhost:11434,
+      # which doesn't exist on Render. See docs/deployment.md §8.

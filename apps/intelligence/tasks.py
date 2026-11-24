@@ -5,7 +5,6 @@ import time
 
 import requests
 from celery import shared_task
-from django.conf import settings
 from django.core.cache import cache
 from django.utils import timezone
 
@@ -213,29 +212,20 @@ def task_predict_seniority(batch_size: int = 200) -> dict:
 
 EMBED_LOCK_KEY = 'embedding_lock'
 EMBED_LOCK_TTL = 3600
-EMBED_MODEL = settings.EMBED_MODEL
+EMBED_MODEL = 'nomic-embed-text'
 EMBED_BATCH_SIZE = 32
+OLLAMA_EMBED_URL = 'http://localhost:11434/api/embed'
 
 
 def _embed_batch(texts: list[str]) -> list[list[float]]:
-    """
-    Embed a batch of texts through an OpenAI-compatible /embeddings endpoint:
-    local Ollama (nomic-embed-text) or a hosted API in production. Ollama's
-    /v1/embeddings returns the same vectors as its native /api/embed.
-    Raises on HTTP error.
-    """
-    payload = {'model': EMBED_MODEL, 'input': texts}
-    if settings.EMBED_DIMENSIONS:
-        payload['dimensions'] = settings.EMBED_DIMENSIONS
+    """Call Ollama embed endpoint for a batch of texts. Raises on HTTP error."""
     resp = requests.post(
-        f"{settings.EMBED_BASE_URL.rstrip('/')}/embeddings",
-        json=payload,
-        headers={'Authorization': f'Bearer {settings.OPENAI_API_KEY or "ollama"}'},
+        OLLAMA_EMBED_URL,
+        json={'model': EMBED_MODEL, 'input': texts},
         timeout=60,
     )
     resp.raise_for_status()
-    data = sorted(resp.json()['data'], key=lambda d: d['index'])
-    return [d['embedding'] for d in data]
+    return resp.json()['embeddings']
 
 
 @shared_task(bind=True, max_retries=0)

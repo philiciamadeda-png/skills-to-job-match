@@ -30,6 +30,7 @@ _COST_PER_1K = {
     "llama3.2":     {"input": 0.0, "output": 0.0},
 }
 
+_DEFAULT_MODEL = "llama3.2"
 _DEFAULT_TIMEOUT = 120         # Ollama local inference can be slower
 _MAX_RETRIES = 3
 _BACKOFF_BASE = 2              # seconds; delay = base ** attempt
@@ -94,11 +95,11 @@ class LLMClient:
 
     def __init__(
         self,
-        model: str | None = None,
+        model: str = _DEFAULT_MODEL,
         timeout: int = _DEFAULT_TIMEOUT,
         _call_fn: Optional[Callable] = None,
     ):
-        self.model = model or settings.LLM_MODEL
+        self.model = model
         self.timeout = timeout
         self._call_fn = _call_fn or self._real_call
 

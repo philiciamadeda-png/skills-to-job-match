@@ -6,4 +6,4 @@ Then give me a checklist of the specific errors a Django project usually hits on
 
 ---
 
-Host chosen: **Render** (see `docs/deployment.md` §1 for why). Language models: the laptop's Ollama through a secured tunnel (§8). The answer is `docs/deployment.md`, with `Dockerfile`, `render.yaml` and `config/settings/production.py`.
+Host chosen: **Render** (see `docs/deployment.md` §1 for why). Language models are not part of the deployment (§8). The answer is `docs/deployment.md`, with `Dockerfile`, `render.yaml` and `config/settings/production.py`.
