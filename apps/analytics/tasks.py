@@ -10,7 +10,7 @@ LOCK_TTL = 900  # 15 min
 
 
 @shared_task
-def task_refresh_aggregates() -> dict:
+def refresh_aggregates() -> dict:
     """
     Rebuild the dashboard tables. Queued after every transform and extraction
     run, and once a day by Beat as a safety net.
@@ -18,13 +18,13 @@ def task_refresh_aggregates() -> dict:
     The lock stops two refreshes overlapping; the refresh itself is a full
     replace, so even back-to-back runs never double-count.
     """
-    from apps.analytics.services import refresh_aggregates
+    from apps.analytics import services
 
     if not cache.add(LOCK_KEY, '1', LOCK_TTL):
-        logger.warning('task_refresh_aggregates: already running, skipping')
+        logger.warning('refresh_aggregates: already running, skipping')
         return {'skipped': True, 'reason': 'overlap'}
     try:
-        return refresh_aggregates()
+        return services.refresh_aggregates()
     finally:
         cache.delete(LOCK_KEY)
 
@@ -32,6 +32,6 @@ def task_refresh_aggregates() -> dict:
 def queue_refresh() -> None:
     """Queue a refresh without letting a broker hiccup fail the calling stage."""
     try:
-        task_refresh_aggregates.delay()
+        refresh_aggregates.delay()
     except Exception as exc:
-        logger.error('could not queue task_refresh_aggregates — %s', exc.__class__.__name__)
+        logger.error('could not queue refresh_aggregates — %s', exc.__class__.__name__)

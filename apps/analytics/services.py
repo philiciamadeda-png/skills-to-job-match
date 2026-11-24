@@ -15,10 +15,10 @@ from django.utils import timezone
 
 from apps.analytics.models import (
     HeadlineTotals,
-    SeniorityDailyCount,
-    SkillDailyCount,
-    SourceDailyCount,
-    WorkModeDailyCount,
+    DailySeniorityCount,
+    DailySkillCount,
+    DailySourceCount,
+    DailyWorkModeCount,
 )
 from apps.intelligence.models import Job, JobSkill
 from apps.intelligence.schemas import RemoteStatus, Seniority
@@ -40,14 +40,14 @@ def _jobs():
     return Job.objects.filter(canonical__isnull=True).annotate(day=_posted_day())
 
 
-def _seniority_rows() -> list[SeniorityDailyCount]:
+def _seniority_rows() -> list[DailySeniorityCount]:
     level = Case(When(seniority__in=_LEVELS, then=F('seniority')),
                  default=Value(UNKNOWN), output_field=CharField())
     qs = _jobs().annotate(level=level).values('day', 'level').annotate(n=Count('id'))
-    return [SeniorityDailyCount(day=r['day'], seniority=r['level'], job_count=r['n']) for r in qs]
+    return [DailySeniorityCount(day=r['day'], seniority=r['level'], job_count=r['n']) for r in qs]
 
 
-def _work_mode_rows() -> list[WorkModeDailyCount]:
+def _work_mode_rows() -> list[DailyWorkModeCount]:
     # The LLM's reading of the description wins; a "Remote" location is the fallback.
     mode = Case(
         When(extracted_remote_status__in=_WORK_MODES, then=F('extracted_remote_status')),
@@ -56,15 +56,15 @@ def _work_mode_rows() -> list[WorkModeDailyCount]:
         output_field=CharField(),
     )
     qs = _jobs().annotate(mode=mode).values('day', 'mode').annotate(n=Count('id'))
-    return [WorkModeDailyCount(day=r['day'], work_mode=r['mode'], job_count=r['n']) for r in qs]
+    return [DailyWorkModeCount(day=r['day'], work_mode=r['mode'], job_count=r['n']) for r in qs]
 
 
-def _source_rows() -> list[SourceDailyCount]:
+def _source_rows() -> list[DailySourceCount]:
     qs = _jobs().values('day', 'source').annotate(n=Count('id'))
-    return [SourceDailyCount(day=r['day'], source=r['source'], job_count=r['n']) for r in qs]
+    return [DailySourceCount(day=r['day'], source=r['source'], job_count=r['n']) for r in qs]
 
 
-def _skill_rows() -> list[SkillDailyCount]:
+def _skill_rows() -> list[DailySkillCount]:
     qs = (
         JobSkill.objects
         .filter(job__canonical__isnull=True)
@@ -73,7 +73,7 @@ def _skill_rows() -> list[SkillDailyCount]:
         .annotate(n=Count('id'), required=Count('id', filter=Q(is_required=True)))
     )
     return [
-        SkillDailyCount(day=r['day'], skill_id=r['skill_id'], job_count=r['n'], required_count=r['required'])
+        DailySkillCount(day=r['day'], skill_id=r['skill_id'], job_count=r['n'], required_count=r['required'])
         for r in qs
     ]
 
@@ -93,10 +93,10 @@ def refresh_aggregates() -> dict:
     """Recompute every dashboard table and swap the new rows in atomically."""
     started = timezone.now()
     tables = {
-        SkillDailyCount: _skill_rows(),
-        SeniorityDailyCount: _seniority_rows(),
-        WorkModeDailyCount: _work_mode_rows(),
-        SourceDailyCount: _source_rows(),
+        DailySkillCount: _skill_rows(),
+        DailySeniorityCount: _seniority_rows(),
+        DailyWorkModeCount: _work_mode_rows(),
+        DailySourceCount: _source_rows(),
     }
     headline = _headline()
 

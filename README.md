@@ -200,7 +200,7 @@ python manage.py runserver
 
 Beat dispatches `task_ingest_jobs` every 2 hours, `task_transform_jobs` 30 minutes later, `task_extract_jobs` after that and `task_embed_jobs` last, with run records appearing at `/admin/ingestion/ingestionrun/`, `/admin/intelligence/extractionrun/` and `/admin/intelligence/embeddingrun/`. Extraction only takes pending jobs and embedding only takes jobs whose text or model changed, and each holds a Redis lock, so a stage that starts before the previous one has finished just picks up the rest on its next run.
 
-When transform finishes, and when an extraction run extracts at least one job, a `task_refresh_aggregates` is queued to rebuild the dashboard tables. Beat also runs it once a day as a safety net. See "Week 6 — Aggregations and query performance".
+When transform finishes, and when an extraction run extracts at least one job, the `refresh_aggregates` task is queued to rebuild the dashboard tables. Beat also runs it once a day as a safety net. See "Week 6 — Aggregations and query performance".
 
 ## Maintaining the skill vocabulary
 
@@ -1018,10 +1018,10 @@ Counting the most requested skills across every job on every page load scans all
 
 | Model | One row per | Feeds |
 |---|---|---|
-| `SkillDailyCount` | day × skill (`job_count`, `required_count`) | Top skills, daily skill trend |
-| `SeniorityDailyCount` | day × level (`junior` … `director`, `unknown`) | Jobs by seniority |
-| `WorkModeDailyCount` | day × `remote` / `hybrid` / `on_site` / `unknown` | Remote vs on-site |
-| `SourceDailyCount` | day × source | New jobs per day, per source |
+| `DailySkillCount` | day × skill (`job_count`, `required_count`) | Top skills, daily skill trend |
+| `DailySeniorityCount` | day × level (`junior` … `director`, `unknown`) | Jobs by seniority |
+| `DailyWorkModeCount` | day × `remote` / `hybrid` / `on_site` / `unknown` | Remote vs on-site |
+| `DailySourceCount` | day × source | New jobs per day, per source |
 | `HeadlineTotals` | a single row (pk=1) | Jobs tracked, companies, distinct skills, `refreshed_at` |
 
 Definitions:
@@ -1036,7 +1036,7 @@ Definitions:
 
 - **Replace, never increment.** Every run computes the totals from scratch, so a second run writes the same rows again. It never adds to the first run's numbers. Late changes are picked up too: extraction filling in skills on older jobs, a job marked as a duplicate, a deleted job.
 - **Unique constraints** on `(day, skill)`, `(day, seniority)`, `(day, work_mode)` and `(day, source)`. If two refreshes ever raced, the second would fail loudly instead of inserting a second copy.
-- **A Redis lock** in `task_refresh_aggregates` stops two refreshes overlapping in the first place.
+- **A Redis lock** in the `refresh_aggregates` task (`apps/analytics/tasks.py`) stops two refreshes overlapping in the first place.
 - **Atomic swap.** Postgres readers see the old rows until the commit, so the dashboard is never empty or half-built. A refresh that fails rolls back and the previous numbers stay.
 
 When it runs:
@@ -1077,6 +1077,39 @@ The toolbar shows the problem on one page load. The tests in `apps/core/tests/te
 - **`prefetch_related` is for many-to-many fields and reverse foreign keys**, the "many" side, like `job.skills` or `job.jobskill_set`. Joining would repeat each job once per skill (30 jobs × 8 skills = 240 rows of duplicated job data). So instead it runs **one extra query** for every related row, `WHERE job_id IN (…)`, and matches them up in Python. That's 2 queries in total, however many jobs there are.
 - **They combine.** `Prefetch('jobskill_set', queryset=JobSkill.objects.select_related('skill'))` prefetches the through-table rows and joins each one to its skill.
 - **The trap** (the one we hit above): a prefetch only fills `.all()`. Calling `.values_list()`, `.filter()`, `.count()` or `.order_by()` on the related manager starts a fresh query and ignores the prefetched rows.
+
+### Verification
+
+On the local database (12 jobs), with a Celery worker running:
+
+```bash
+python manage.py shell -c "from apps.analytics.tasks import refresh_aggregates; refresh_aggregates.delay()"
+python manage.py shell -c "from apps.analytics.models import DailySkillCount; print(DailySkillCount.objects.count())"
+```
+
+| | Run 1 | Run 2 |
+|---|---|---|
+| `DailySkillCount` rows / sum of `job_count` | 91 / 91 | 91 / 91 |
+| Sum of `DailySeniorityCount` / `DailySourceCount` | 12 / 12 | 12 / 12 |
+| Headline | 12 jobs, 9 companies, 74 skills | 12 jobs, 9 companies, 74 skills |
+| Worker | `succeeded in 0.09s` | `succeeded in 0.07s` |
+
+The second run left every number unchanged (no doubling). Only `refreshed_at` moved forward.
+
+Query count per page from the debug toolbar's SQL panel (`runserver`, signed in):
+
+| Page | Queries |
+|---|---|
+| `/` upload | 3 |
+| `/cv/<id>/` matches (9 jobs) | 8 |
+| `/cv/<id>/job/<id>/` match detail | 7 |
+| Admin: jobs list | 7 |
+| Admin: job skills list | 6 |
+| Admin: skills list | 6 |
+| Admin: raw payloads list | 6 |
+| Admin: daily skill counts | 7 |
+
+Every page is at or under 10 queries. The 3-vs-30-jobs tests show the counts don't grow with more rows.
 
 ### Tests
 

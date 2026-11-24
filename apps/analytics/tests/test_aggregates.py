@@ -9,10 +9,10 @@ from django.test.utils import CaptureQueriesContext
 from apps.analytics import selectors
 from apps.analytics.models import (
     HeadlineTotals,
-    SeniorityDailyCount,
-    SkillDailyCount,
-    SourceDailyCount,
-    WorkModeDailyCount,
+    DailySeniorityCount,
+    DailySkillCount,
+    DailySourceCount,
+    DailyWorkModeCount,
 )
 from apps.analytics.services import refresh_aggregates
 from apps.intelligence.models import Job, JobSkill, Location, Skill
@@ -39,10 +39,10 @@ def _job(job_factory, *, day=TODAY, skills=(), nice=(), **kw):
 def _snapshot():
     """Every aggregate row as plain tuples, for comparing runs."""
     return {
-        'skills': sorted(SkillDailyCount.objects.values_list('day', 'skill__name', 'job_count', 'required_count')),
-        'seniority': sorted(SeniorityDailyCount.objects.values_list('day', 'seniority', 'job_count')),
-        'work_mode': sorted(WorkModeDailyCount.objects.values_list('day', 'work_mode', 'job_count')),
-        'source': sorted(SourceDailyCount.objects.values_list('day', 'source', 'job_count')),
+        'skills': sorted(DailySkillCount.objects.values_list('day', 'skill__name', 'job_count', 'required_count')),
+        'seniority': sorted(DailySeniorityCount.objects.values_list('day', 'seniority', 'job_count')),
+        'work_mode': sorted(DailyWorkModeCount.objects.values_list('day', 'work_mode', 'job_count')),
+        'source': sorted(DailySourceCount.objects.values_list('day', 'source', 'job_count')),
         'headline': list(HeadlineTotals.objects.values_list('jobs_tracked', 'companies', 'distinct_skills')),
     }
 
@@ -145,7 +145,7 @@ def test_refresh_on_empty_database():
 def test_failed_refresh_keeps_the_previous_numbers(dataset):
     refresh_aggregates()
     before = _snapshot()
-    with patch.object(SourceDailyCount.objects, 'bulk_create', side_effect=RuntimeError('boom')):
+    with patch.object(DailySourceCount.objects, 'bulk_create', side_effect=RuntimeError('boom')):
         with pytest.raises(RuntimeError):
             refresh_aggregates()
     assert _snapshot() == before                           # whole swap rolled back
@@ -172,20 +172,20 @@ def test_selectors_never_query_jobs(dataset):
 
 def test_task_skips_when_another_refresh_holds_the_lock(dataset):
     from django.core.cache import cache
-    from apps.analytics.tasks import LOCK_KEY, task_refresh_aggregates
+    from apps.analytics.tasks import LOCK_KEY, refresh_aggregates
 
     cache.add(LOCK_KEY, '1')
-    assert task_refresh_aggregates.run() == {'skipped': True, 'reason': 'overlap'}
+    assert refresh_aggregates.run() == {'skipped': True, 'reason': 'overlap'}
     assert not HeadlineTotals.objects.exists()
 
     cache.delete(LOCK_KEY)
-    assert task_refresh_aggregates.run()['jobs_tracked'] == 4
+    assert refresh_aggregates.run()['jobs_tracked'] == 4
     assert cache.get(LOCK_KEY) is None                     # released after the run
 
 
 def test_transform_queues_a_refresh():
     from apps.ingestion.tasks import task_transform_jobs
-    with patch('apps.analytics.tasks.task_refresh_aggregates.delay') as delay:
+    with patch('apps.analytics.tasks.refresh_aggregates.delay') as delay:
         task_transform_jobs.run()
     delay.assert_called_once_with()
 
@@ -195,7 +195,7 @@ def test_extraction_queues_a_refresh_only_when_jobs_were_extracted(job_factory):
     job_factory(description='Python developer')
     ok = {'succeeded': 1, 'failed': 0, 'retried': 0, 'tokens_in': 0, 'tokens_out': 0, 'cost_usd': 0.0}
 
-    with patch('apps.analytics.tasks.task_refresh_aggregates.delay') as delay, \
+    with patch('apps.analytics.tasks.refresh_aggregates.delay') as delay, \
          patch('apps.intelligence.tasks.LLMClient'), \
          patch('apps.intelligence.tasks._extract_one', return_value=ok), \
          patch('apps.intelligence.tasks.time.sleep'):
@@ -207,13 +207,13 @@ def test_extraction_queues_a_refresh_only_when_jobs_were_extracted(job_factory):
 
 def test_broker_down_does_not_fail_the_transform():
     from apps.ingestion.tasks import task_transform_jobs
-    with patch('apps.analytics.tasks.task_refresh_aggregates.delay', side_effect=ConnectionError):
+    with patch('apps.analytics.tasks.refresh_aggregates.delay', side_effect=ConnectionError):
         assert task_transform_jobs.run() == {'created': 0, 'skipped': 0, 'failed': 0}
 
 
 def test_refresh_is_scheduled():
     from config.celery import app
     scheduled = {entry['task'] for entry in settings.CELERY_BEAT_SCHEDULE.values()}
-    assert 'apps.analytics.tasks.task_refresh_aggregates' in scheduled
+    assert 'apps.analytics.tasks.refresh_aggregates' in scheduled
     app.loader.import_default_modules()
-    assert 'apps.analytics.tasks.task_refresh_aggregates' in app.tasks
+    assert 'apps.analytics.tasks.refresh_aggregates' in app.tasks
