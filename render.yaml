@@ -78,13 +78,15 @@ envVarGroups:
     envVars:
       - key: SECRET_KEY
         generateValue: true             # same random value for all three services
-      - key: OPENAI_API_KEY
-        sync: false                     # Render asks for it when you create the Blueprint
+      # AI: the Ollama on your laptop, reached through scripts/ai_tunnel.sh
+      # (docs/deployment.md §8). Render asks for both values when you create the Blueprint.
       - key: LLM_BASE_URL
-        value: https://api.openai.com/v1
+        sync: false                     # the tunnel address + /v1, printed by scripts/ai_tunnel.sh
+      - key: OPENAI_API_KEY
+        sync: false                     # the gateway token: scripts/ai_tunnel.sh --show-token
       - key: LLM_MODEL
-        value: gpt-4o-mini
+        value: llama3.2
       - key: EMBED_MODEL
-        value: text-embedding-3-small
-      - key: EMBED_DIMENSIONS             # Job.embedding is vector(768)
-        value: "768"
+        value: nomic-embed-text
+      # To use OpenAI instead: LLM_BASE_URL=https://api.openai.com/v1, OPENAI_API_KEY=sk-…,
+      # LLM_MODEL=gpt-4o-mini, EMBED_MODEL=text-embedding-3-small, EMBED_DIMENSIONS=768.
