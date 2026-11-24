@@ -1,8 +1,8 @@
 # Deploying to Render
 
-How Skills to Job Match runs in production: the web app, a Celery worker, Celery beat, Postgres with pgvector, Redis, and a hosted language model.
+How Skills to Job Match runs in production: the web app, a Celery worker, Celery beat, Postgres with pgvector, Redis, and the language models, served from the Ollama on your laptop through a secured tunnel.
 
-Everything in this note was run for real before it was written down. The production Docker image was built locally and started as web + worker + beat against an **empty** Postgres database. Migrations, static files, HTTPS handling, CSRF, the health check, graceful shutdown and the full pipeline (ingest → transform → extract → embed → dashboard) all worked; see [What was verified](#what-was-verified). The Render-specific parts (the Blueprint file) were validated against Render's published schema. They run for real on your first deploy.
+Everything in this note was run for real before it was written down. The production Docker image was built locally and started as web + worker + beat against an **empty** Postgres database. Migrations, static files, HTTPS handling, CSRF, the health check, graceful shutdown and the full pipeline (ingest → transform → extract → embed → dashboard) all worked; see [What was verified](#what-was-verified). The tunnel to the laptop's Ollama was tested from the public internet and used by the production container. The Render-specific parts (the Blueprint file) were validated against Render's published schema. They run for real on your first deploy.
 
 > The brief says Django 5; this project is on Django 6.1. Everything here applies to both.
 
@@ -50,7 +50,8 @@ Everything in this note was run for real before it was written down. The product
                                 │                 │
                          skills-db (Postgres 16 + pgvector)   skills-redis (Key Value: broker, locks, cache)
                                                   │
-                                     OpenAI API (gpt-4o-mini, text-embedding-3-small)
+              HTTPS ▼  Cloudflare tunnel  →  your laptop: ollama_gateway.py (token check)  →  Ollama
+                                                     (llama3.2, nomic-embed-text)
 ```
 
 Files:
@@ -62,6 +63,7 @@ Files:
 | `render.yaml` | The Blueprint: database, Key Value, web, worker, beat, shared environment variables |
 | `config/settings/production.py` | Production settings, each block commented with the error it prevents |
 | `apps/core/middleware.py` | `/healthz/` for Render's health check |
+| `scripts/ai_tunnel.sh`, `scripts/ollama_gateway.py` | Run on your laptop: the token-checking gateway and the tunnel to it |
 
 ## 3. Production settings: what differs from local
 
@@ -80,7 +82,7 @@ Files:
 | Static files | `runserver` serves them | WhiteNoise + `CompressedManifestStaticFilesStorage` | **Unstyled pages**, every `/static/` URL 404s |
 | `LOGGING` | Django defaults | everything to stdout; 500s with tracebacks | "Server Error (500)" with **nothing in the logs** |
 | Celery | defaults | results expire after 1 h; worker children recycled at 300 MB | 25 MB Redis fills with results; worker OOM-killed on a 512 MB box |
-| AI endpoints | Ollama at `localhost:11434` | OpenAI via `LLM_*` / `EMBED_*` variables | Every extraction and explanation fails: `Connection refused` |
+| AI endpoints | Ollama at `localhost:11434` | the tunnel address (`LLM_BASE_URL`) and gateway token (`OPENAI_API_KEY`) | Every extraction and explanation fails: `Connection refused` |
 | Debug toolbar | on | not installed (it's only added in `local.py`) | — |
 
 `python manage.py check --deploy` passes with no warnings. Three are silenced on purpose, each with a comment in `production.py`:
@@ -182,30 +184,90 @@ Two things to keep in mind:
 
 ## 8. The language model in production
 
-Locally the app uses Ollama (`llama3.2`, `nomic-embed-text`), which doesn't exist on Render. The endpoints are now settings, so production points at OpenAI without code changes:
+Render can't run Ollama, so production uses **the Ollama on your laptop**, reached through a Cloudflare Tunnel. It's free, and it uses exactly the same models as local development, so no re-embedding and no behaviour change.
 
-| Variable | Local default | Production (`render.yaml`) |
+```
+Render (web / worker) ──HTTPS──▶ https://<random>.trycloudflare.com ──▶ cloudflared on your laptop
+                                   ──▶ scripts/ollama_gateway.py (127.0.0.1:11435) ──▶ Ollama (127.0.0.1:11434)
+```
+
+**Why there's a gateway.** Ollama has no authentication. A tunnel straight to it would let anyone who found the address run models on your laptop, or download and delete them. `scripts/ollama_gateway.py` (standard library only) sits in between:
+- **Token required:** it refuses any request without `Authorization: Bearer <token>`. The app already sends `Bearer <OPENAI_API_KEY>` with every chat and embeddings call, so in production `OPENAI_API_KEY` *is* the gateway token.
+- **Two endpoints only:** it forwards `/v1/chat/completions` and `/v1/embeddings`. Ollama's own API (`/api/pull`, `/api/delete`, `/api/tags`…) is unreachable.
+- **No content in the logs:** it logs method, path and status only, because CV text passes through it.
+
+The token is created once by `scripts/ai_tunnel.sh` and kept in `~/.config/skills-to-job-match/gateway-token` (readable only by you), so Render's value never has to change.
+
+| Variable | Local | Production (`render.yaml`) |
 |---|---|---|
-| `LLM_BASE_URL` | `http://localhost:11434/v1` | `https://api.openai.com/v1` |
-| `LLM_MODEL` | `llama3.2` | `gpt-4o-mini` |
+| `LLM_BASE_URL` | `http://localhost:11434/v1` | the tunnel address + `/v1`; you enter it in Render |
+| `OPENAI_API_KEY` | unset | the gateway token; you enter it in Render |
+| `LLM_MODEL` | `llama3.2` | `llama3.2` |
+| `EMBED_MODEL` | `nomic-embed-text` | `nomic-embed-text` |
 | `EMBED_BASE_URL` | same as `LLM_BASE_URL` | same |
-| `EMBED_MODEL` | `nomic-embed-text` | `text-embedding-3-small` |
-| `EMBED_DIMENSIONS` | unset | `768` (matches the `vector(768)` column) |
-| `OPENAI_API_KEY` | unset (`ollama`) | you enter it when creating the Blueprint |
 
-- **Same code path both ways:** embeddings now use the OpenAI-style `/embeddings` endpoint. Ollama supports it too, and it was checked to return **identical** vectors to the old `/api/embed` call (cosine 1.0, max difference 0.0), so nothing changes locally.
-- **No mixing models:** production embeds every job and CV with the same model, starting from an empty database, so the two models are never compared with each other.
-- **Cost:** a few cents a day at this scale.
-- **What carries over from Ollama:** the explanation cache is keyed by model name, and the explanation output checks still apply.
+**Once:** install `cloudflared`. No Cloudflare account is needed for quick tunnels. On this laptop it's in `~/.local/bin`:
+
+```bash
+curl -L -o ~/.local/bin/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+chmod +x ~/.local/bin/cloudflared
+```
+
+**Each time you want the site's AI features on:**
+
+```bash
+scripts/ai_tunnel.sh                 # first time: scripts/ai_tunnel.sh --show-token
+```
+
+It checks Ollama and the two models are there, starts the gateway and the tunnel, and prints:
+
+```
+  Tunnel is up.  In Render → Environment Groups → skills-shared, set:
+    LLM_BASE_URL   = https://studied-cinema-keyboard-bids.trycloudflare.com/v1
+```
+
+Paste that into Render and save. Render restarts web, worker and beat with the new address. Leave the script running; Ctrl+C stops it.
+
+**What to expect:**
+- **Only while the laptop is on, awake, online and running the script.** At other times, the rest of the site still works: dashboard, job list, sign-up.
+- **Offline is safe.** Extraction stops and the jobs **stay pending**; the next run picks them up. Embedding failures are retried. A CV upload says "couldn't analyse it just now", and explanations fall back to the plain template. Nothing is marked permanently failed.
+- **The address changes every time the script starts.** These are Cloudflare's free "quick tunnels". Update `LLM_BASE_URL` each time. A fixed address needs a free Cloudflare account and a domain you own (a "named tunnel").
+- **Cloudflare cuts requests at 100 s.** Extraction took 52 s through the tunnel in testing, so there's room, but a cold model plus a long job description can get close.
+- **Speed is your laptop's speed:** about 30–60 s per CV upload or explanation.
+
+**Verified:**
+- **From the public internet:**
+  - no token or a wrong token → `401`
+  - `/api/pull`, `/api/tags`, `/v1/models` → `404`, even with the right token
+  - right token → embeddings (768 dimensions) and chat both worked
+- **From the production container**, with the Render settings: embeddings in 0.4 s, and a real job ad extracted (Python, Django, PostgreSQL · senior · remote) in 52 s.
+
+**Switching to OpenAI later** needs no code change. Set:
+- `LLM_BASE_URL=https://api.openai.com/v1`
+- `OPENAI_API_KEY=sk-…`
+- `LLM_MODEL=gpt-4o-mini`
+- `EMBED_MODEL=text-embedding-3-small`
+- `EMBED_DIMENSIONS=768` (it returns 1536 dimensions otherwise, and the column is `vector(768)`)
+
+Jobs embedded with `nomic-embed-text` are re-embedded automatically on the next embedding run, because the task re-embeds any job whose `embedding_model` differs. CVs already uploaded keep their old embedding until they're uploaded again.
+
+**Same code path everywhere:** embeddings use the OpenAI-style `/embeddings` endpoint. Ollama's version was checked to return **identical** vectors to its native `/api/embed` (cosine 1.0, max difference 0.0), so local development is unchanged.
 
 ## 9. First deploy, step by step
 
 1. **Merge** this branch into `main` and push.
-2. **Render dashboard** → **New** → **Blueprint** → connect GitHub → pick `skills-to-job-match`. Render reads `render.yaml` and lists 5 resources.
-3. **Enter `OPENAI_API_KEY`** when asked (the only secret Render can't generate). → **Apply**.
-4. **Watch** the database and Key Value come up, then the three services build. The web service log should show the pre-deploy step applying migrations (`Applying intelligence.0008_pgvector_job_embedding... OK`) and `Done — skills created: 29`.
-5. **Check health**: `https://skills-web.onrender.com/healthz/` → `ok`. Then open `/`. It shows "No numbers yet" (the database is empty), styled.
-6. **Load jobs** without waiting two hours for beat. Open **skills-web → Shell**:
+2. **On your laptop**, make sure Ollama is running, then start the tunnel and leave it running:
+
+   ```bash
+   scripts/ai_tunnel.sh --show-token
+   ```
+
+   Keep the printed `LLM_BASE_URL` and `OPENAI_API_KEY` (the gateway token) for the next step.
+3. **Render dashboard** → **New** → **Blueprint** → connect GitHub → pick `skills-to-job-match`. Render reads `render.yaml` and lists 5 resources.
+4. **Enter the two values** when asked: `LLM_BASE_URL` and `OPENAI_API_KEY`. → **Apply**.
+5. **Watch** the database and Key Value come up, then the three services build. The web service log should show the pre-deploy step applying migrations (`Applying intelligence.0008_pgvector_job_embedding... OK`) and `Done — skills created: 29`.
+6. **Check health**: `https://skills-web.onrender.com/healthz/` → `ok`. Then open `/`. It shows "No numbers yet" (the database is empty), styled.
+7. **Load jobs** without waiting two hours for beat. Open **skills-web → Shell**:
 
    ```bash
    python manage.py shell -c "
@@ -216,8 +278,8 @@ Locally the app uses Ollama (`llama3.2`, `nomic-embed-text`), which doesn't exis
    ```
 
    Transform queues the dashboard refresh itself. Extraction and embedding follow on beat's schedule, or queue `task_extract_jobs` / `task_embed_jobs` the same way. Watch progress in **skills-worker → Logs**.
-7. **Optional:** `python manage.py createsuperuser` in the Shell for `/admin/`.
-8. **Sign up** on the site and upload a CV.
+8. **Optional:** `python manage.py createsuperuser` in the Shell for `/admin/`.
+9. **Sign up** on the site and upload a CV.
 
 **From then on:** every push to `main` builds, migrates and deploys all three services.
 
@@ -368,23 +430,33 @@ Each entry gives **what you see**, **why**, and **the fix**. ⚑ marks the ones 
 
 ### This project specifically
 
-**26. Extraction and explanations fail: `httpx.ConnectError: Connection refused` (Ollama at `localhost:11434`)**
-- *Why:* the AI endpoints still point at Ollama.
-- *Fix:* set `LLM_BASE_URL`, `LLM_MODEL`, `EMBED_MODEL`, `EMBED_DIMENSIONS` and `OPENAI_API_KEY` (done in `render.yaml`, apart from the key).
+**26. Extraction and explanations fail: `Connection refused` to `localhost:11434`**
+- *Why:* `LLM_BASE_URL` isn't set, so the local default (Ollama on the same machine) is used, and there's no Ollama on Render.
+- *Fix:* set `LLM_BASE_URL` to the tunnel address printed by `scripts/ai_tunnel.sh`, with `/v1` on the end.
 
-**27. `openai.AuthenticationError: Error code: 401 - Incorrect API key provided`**
-- *Why:* the key is missing, mistyped, or has no credit.
-- *Fix:* re-enter `OPENAI_API_KEY` in the `skills-shared` environment group. It's shared, so all three services pick it up after a redeploy.
+**27. `openai.AuthenticationError: Error code: 401 - {'error': 'unauthorized'}`**
+- *Why:* the gateway refused the token. `OPENAI_API_KEY` in Render doesn't match `~/.config/skills-to-job-match/gateway-token`, for example after the token file was deleted and recreated.
+- *Fix:* run `scripts/ai_tunnel.sh --show-token` and paste the token into the `skills-shared` group.
 
-**28. Embedding fails: `expected 768 dimensions, not 1536`**
-- *Why:* `text-embedding-3-small` returns 1536 dimensions unless asked for fewer, and the column is `vector(768)`.
-- *Fix:* `EMBED_DIMENSIONS=768` (done).
+**28. Worker log full of `Server error, retrying…`; status `530` or `502`, or Cloudflare `Error 1033`**
+- *Why:*
+  - `530` / 1033: the tunnel is down (laptop asleep, offline, or the script stopped), or `LLM_BASE_URL` still has an old address. It changes each time the script starts.
+  - `502` with `ollama is not reachable`: the gateway is up but Ollama isn't running.
+- *Fix:* start Ollama and `scripts/ai_tunnel.sh`, then update `LLM_BASE_URL`. Pending jobs are picked up on the next run.
 
-**29. `InconsistentVersionWarning: Trying to unpickle estimator … from version X when using version Y`**
+**29. ⚑ `Could not resolve host: <name>.trycloudflare.com` right after starting a tunnel**
+- *Why:* a brand-new quick-tunnel address takes a moment to appear in DNS, and a resolver that looked it up too early caches the "doesn't exist" answer for a while.
+- *Fix:* wait a minute before testing. Render's resolvers see it once it's published.
+
+**30. `Error code: 524` (a timeout) on long AI calls**
+- *Why:* Cloudflare closes requests that take longer than 100 s. The app treats it as a server error and retries, which repeats the slow call.
+- *Fix:* make sure the model is loaded (warm) before a demo, or use a faster model.
+
+**31. `InconsistentVersionWarning: Trying to unpickle estimator … from version X when using version Y`**
 - *Why:* the seniority model in `ml/artifacts/` was saved with a different scikit-learn than the image installs.
 - *Fix:* keep `scikit-learn` pinned in `requirements.txt` (it is), or retrain and save with the deployed version.
 
-**30. Free tiers that bite later**
+**32. Free tiers that bite later**
 - **Free Render Postgres expires after 30 days**, which is why the Blueprint uses the $6 plan.
 - **Free Key Value keeps everything in memory only:** a restart loses queued tasks and the explanation cache, which is acceptable here.
 - **A free web service sleeps after inactivity:** the first visit then takes about a minute.
