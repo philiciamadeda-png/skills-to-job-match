@@ -52,9 +52,16 @@ apps/
       compare_embedding_strategies.py   # Embedding strategy harness
       results/                          # Timestamped JSON result files per prompt version
   accounts/       # CV and CVProfile models, CV text extraction, profile service,
-                  # upload → matches → match pages (views, forms, templates)
+                  # sign-up, profile, upload → matches → match pages
   analytics/      # Dashboard aggregation tables, refresh service + Celery task,
-                  # selectors (what the dashboard reads)
+                  # selectors (what the dashboard reads), dashboard view
+  core/           # TimestampedModel, HTMX helper, `ui` template filters
+templates/        # base.html, partials/ (nav, messages, form field), registration/ (login, sign-up)
+static/
+  src/app.css     # Tailwind source: the three colours and shared components
+  css/app.css     # Built CSS (committed)
+  js/dashboard.js # Chart.js setup for the four dashboard charts
+  vendor/         # HTMX 2.0.11, Chart.js 4.6.2 — served locally, no CDN
 docs/
   matching-design.md       # Design note for the matching feature
   matching-evaluation.md   # Hand-judged results, fixes, remaining failures
@@ -1116,4 +1123,98 @@ Every page is at or under 10 queries. The 3-vs-30-jobs tests show the counts don
 ```bash
 pytest apps/analytics apps/core -v     # 21 tests
 pytest                                 # all 171
+```
+
+## Week 6 — The interface (Task 2)
+
+The prompt is in [`week6_task2_prompt.md`](week6_task2_prompt.md). It describes the aggregation models, the four questions the dashboard answers, and the pages.
+
+### Pages
+
+| URL | Who | What |
+|---|---|---|
+| `/` | Everyone | **Dashboard**: four headline numbers and four charts |
+| `/jobs/` | Everyone | **Job list**: search (title, company, skill), filters for level, work mode and source, 20 per page |
+| `/match/` | Signed in | Upload a CV (was `/` in Week 5) |
+| `/cv/<id>/` | Signed in | Ranked matches with matched ✓ and missing ✗ skills, level fit, and a **"Your biggest gaps"** panel |
+| `/cv/<id>/job/<id>/` | Signed in | Explanation, how the score was built, and the facts |
+| `/accounts/signup/`, `/accounts/login/` | Everyone | Sign up / log in. Log out is a POST from the nav. |
+| `/accounts/profile/` | Signed in | Latest CV, its top 5 matches and gaps, and earlier CVs |
+
+Sign-in no longer goes through the admin login page. `LOGIN_URL` is the new `/accounts/login/`.
+
+### The dashboard: four questions, four charts
+
+Each chart answers one question. The question is the heading, and a sentence under it gives the answer, worked out from the same numbers as the chart.
+
+| Question | Chart | Example answer (local data) |
+|---|---|---|
+| Which skills are employers asking for most? | Horizontal bar, top 10 skills. Axes: *Skill*, *Jobs asking for the skill* | "Python is asked for most: 4 of 12 jobs (33%)." |
+| Is demand for those skills rising or falling? | Line, weekly, top 5 skills, the last 12 weeks of data. Axes: *Week starting*, *Jobs posted* | "Rising most: Python, 3 jobs in the last 4 weeks against 1 in the 4 before." |
+| What level are employers hiring at? | Bar, junior → director, then "not stated" in grey. Axes: *Seniority*, *Jobs* | "Of jobs that state a level, most are senior (7 of 7). 5 don't say." |
+| How many roles can be done remotely? | Bar: remote, hybrid, on-site, not stated. Axes: *Work mode*, *Jobs* | "12 of 12 jobs (100%) can be done fully remotely." |
+
+Headline numbers: jobs tracked, companies hiring, distinct skills, and new jobs in the last 7 days.
+
+New jobs per day per source is computed (Task 1) but isn't a chart. "Which board did a job come from?" isn't a question a job seeker asks, so it stays as data for the admin.
+
+The trend chart ends at the latest week that has data, not at today, so a pause in ingestion doesn't leave it empty.
+
+The dashboard reads only the aggregation tables. `test_dashboard_never_reads_raw_jobs` checks that, and the page runs 7 queries.
+
+### Structure
+
+- **One base template** (`templates/base.html`): the nav, messages and footer. Every page extends it, and the old `accounts/base.html` is gone.
+- **Partials** (`_*.html`): every fragment HTMX swaps is its own template.
+  - `intelligence/_job_results.html` (+ `_job_row.html`)
+  - `accounts/_match_results.html` (+ `_match_card.html`, `_gaps.html`)
+  - shared pieces in `templates/partials/` (nav, messages, form field)
+- **HTMX** (`apps/core/htmx.py`): a view returns the partial when the request has `HX-Request: true`, and the full page otherwise. That includes HTMX's history-restore requests, so every URL works without JavaScript. Responses send `Vary: HX-Request` so a browser cache never mixes up the two.
+  - **Job list:** typing in the search box (debounced 300 ms) or changing a filter swaps just the results and pushes the URL, so a filtered list can be bookmarked or shared. Paging does the same.
+  - **Matches page:** the remote/countries filters swap the results the same way.
+- **Three colours**, enforced by the build. `static/src/app.css` switches Tailwind's default palette off (`--color-*: initial`) and defines only:
+  - **primary** (indigo): actions, links, chart bars, matched skills
+  - **slate**: text, borders, backgrounds, "not stated" bars
+  - **accent** (amber): only for gaps — missing skills, roles above your level, errors
+
+  Any other colour class simply doesn't exist in the built CSS. The charts read the same CSS variables. The 5-line trend chart stays apart with shades of primary and dash patterns, not new colours.
+- **Spacing**: cards are `p-6` with `gap-6` between them, and inner spacing is `2` / `4`. Shared components (`.card`, `.btn`, `.chip`, `.chip-gap`) live in `app.css`. Django's form widgets are styled in Tailwind's base layer, so forms need no per-field classes.
+
+### Building the CSS
+
+Tailwind v4 standalone CLI, through the `pytailwindcss` pip package (no Node needed). The built file is committed, so you only need this after changing classes in a template:
+
+```bash
+tailwindcss -i static/src/app.css -o static/css/app.css --minify            # once
+tailwindcss -i static/src/app.css -o static/css/app.css --watch             # while editing
+```
+
+### Query counts
+
+The new pages are in the 3-vs-30-jobs N+1 tests (`apps/core/tests/test_query_counts.py`):
+
+| Page | Queries |
+|---|---|
+| Dashboard | 7 (aggregation tables only) |
+| Job list | constant. `select_related('company', 'location')` + `Prefetch('jobskill_set', … select_related('skill'))`, search on skills via `EXISTS` (no duplicate rows, no `DISTINCT`) |
+| Profile | constant. `select_related('profile')` on the CV list, so checking each CV for a profile doesn't query |
+| Matches | 8 (unchanged) |
+
+The job list's remote filter uses the same rule as the dashboard (`apps/intelligence/queries.py`). `test_remote_filter_agrees_with_dashboard` checks that the two counts match.
+
+### Checked in a browser
+
+`runserver` plus headless Chromium on the local data:
+- every page rendered, with no JavaScript errors and no server errors
+- typing "python" and choosing **Remote** on `/jobs/` updated the list and the URL (`?q=python&work_mode=remote…`) without a page reload
+- the dashboard, matches, match detail, profile, sign-up and login pages looked right at desktop width, and the dashboard also at phone width (390 px)
+
+One fix from that check: match cards now list the first 6 missing skills, then "and N more". One job listed 31, which made a wall of amber text. The full list stays on the match detail page.
+
+### Tests
+
+```bash
+pytest apps/analytics/tests/test_dashboard.py apps/intelligence/tests/test_job_list.py \
+       apps/accounts/tests/test_auth_and_profile.py apps/core -v
+pytest                                     # all 209
 ```
