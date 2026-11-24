@@ -205,17 +205,12 @@ Locally the app uses Ollama (`llama3.2`, `nomic-embed-text`), which doesn't exis
 3. **Enter `OPENAI_API_KEY`** when asked (the only secret Render can't generate). → **Apply**.
 4. **Watch** the database and Key Value come up, then the three services build. The web service log should show the pre-deploy step applying migrations (`Applying intelligence.0008_pgvector_job_embedding... OK`) and `Done — skills created: 29`.
 5. **Check health**: `https://skills-web.onrender.com/healthz/` → `ok`. Then open `/`. It shows "No numbers yet" (the database is empty), styled.
-6. **Load jobs** without waiting two hours for beat. Open **skills-web → Shell**:
+6. **Jobs load by themselves.** After the first deploy, `initialDeployHook` runs `python manage.py start_pipeline` once. It queues ingest (both sources) → transform → extract → embed for the worker, so you don't wait two hours for beat. Watch **skills-worker → Logs**:
+   - ingest and transform finish in about a minute
+   - extraction of ~900 jobs takes about 45–60 minutes on OpenAI and costs under $0.50
+   - the dashboard fills in as it goes
 
-   ```bash
-   python manage.py shell -c "
-   from apps.ingestion.tasks import task_ingest_jobs, task_transform_jobs
-   task_ingest_jobs.delay('remotive'); task_ingest_jobs.delay('arbeitnow', max_pages=3)"
-   # a minute later:
-   python manage.py shell -c "from apps.ingestion.tasks import task_transform_jobs; task_transform_jobs.delay()"
-   ```
-
-   Transform queues the dashboard refresh itself. Extraction and embedding follow on beat's schedule, or queue `task_extract_jobs` / `task_embed_jobs` the same way. Watch progress in **skills-worker → Logs**.
+   To run the whole pipeline again by hand: `python manage.py start_pipeline` in **skills-web → Shell**.
 7. **Optional:** `python manage.py createsuperuser` in the Shell for `/admin/`.
 8. **Sign up** on the site and upload a CV.
 
@@ -230,6 +225,7 @@ The production image, built and run locally with podman against a **new, empty**
 | `docker build` | ✓ 135 static files collected, 405 post-processed (hashed + gzip). Image 792 MB |
 | Pre-deploy on an empty database | ✓ all migrations including pgvector, then 29 skills + 73 aliases seeded |
 | Pre-deploy again (every deploy) | ✓ "No migrations to apply", 0 skills created |
+| `start_pipeline` (the first-deploy hook) | ✓ queued the chain; the worker ingested 15 + 900 jobs → transformed 905 → refreshed the dashboard → started extraction |
 | `manage.py check --deploy` | ✓ no issues (3 silenced, explained above) |
 | `/healthz/` with an internal Host header | ✓ 200 `ok` (bypasses host check and HTTPS redirect) |
 | Plain HTTP | ✓ 301 → https |

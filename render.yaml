@@ -35,6 +35,9 @@ services:
     # Runs in the new image after the build and before traffic moves to it.
     # If it fails, the deploy stops and the old version keeps serving.
     preDeployCommand: python manage.py migrate --noinput && python manage.py seed_skills
+    # Once, after the very first deploy: fill the empty database straight away
+    # instead of waiting two hours for Beat. Only queues; the worker does the work.
+    initialDeployHook: python manage.py start_pipeline
     envVars:
       - fromGroup: skills-shared
       - key: DATABASE_URL
