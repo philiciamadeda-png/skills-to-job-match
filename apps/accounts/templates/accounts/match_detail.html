@@ -23,11 +23,11 @@
   <div class="space-y-6 lg:col-span-2">
     <section class="card">
       <h2 class="font-semibold text-slate-900">Why this match</h2>
-      <p class="mt-2 text-slate-700">{{ explanation }}</p>
-      <p class="muted mt-2">
-        {% if explanation_source == "llm" %}Written by the language model from the facts on this page.
-        {% else %}Generated from the facts on this page (the language model’s answer wasn’t used).{% endif %}
-      </p>
+      <div hx-get="{% url 'accounts:match_explanation' cv.pk r.job.pk %}{{ filter_query }}" hx-trigger="load" aria-live="polite"
+           hx-on::response-error="this.innerHTML = '<p class=&quot;muted mt-2&quot;>We couldn’t write an explanation just now. The score and facts on this page are complete.</p>'">
+        <p class="muted mt-2 animate-pulse">Writing a short explanation from the facts below — this can take up to a minute the first time…</p>
+        <noscript><p class="muted mt-2">Turn on JavaScript to see a written explanation. The score and facts on this page are complete without it.</p></noscript>
+      </div>
     </section>
 
     <section class="card">

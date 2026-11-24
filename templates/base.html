@@ -5,7 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Skills to Job Match{% endblock %} · Skills to Job Match</title>
   <link rel="stylesheet" href="{% static 'css/app.css' %}">
+  {# No history snapshots: Back re-fetches the page, so form fields always match the results. #}
+  <meta name="htmx-config" content='{"historyCacheSize": 0}'>
   <script src="{% static 'vendor/htmx-2.0.11.min.js' %}" defer></script>
+  <script src="{% static 'js/htmx-setup.js' %}" defer></script>
   {% block head %}{% endblock %}
 </head>
 <body class="flex min-h-full flex-col text-slate-800" hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>

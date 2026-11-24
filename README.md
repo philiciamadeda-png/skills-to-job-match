@@ -1211,10 +1211,43 @@ The job list's remote filter uses the same rule as the dashboard (`apps/intellig
 
 One fix from that check: match cards now list the first 6 missing skills, then "and N more". One job listed 31, which made a wall of amber text. The full list stays on the match detail page.
 
+### Verification: a first-time visitor walkthrough
+
+`python manage.py runserver`, then a headless browser acting as someone who has never seen the site. Real clicks and typing only, with a new account and a real CV (`eval_cvs/02_brian_otieno_senior_backend_engineer.docx`):
+
+| # | Step | Result |
+|---|---|---|
+| 1 | Open `/` | Dashboard: 4 headline numbers, 4 charts |
+| 2 | **Jobs** → type "react" → Level **Senior** | List narrows to 4 without a reload. URL `/jobs/?q=react&seniority=senior` |
+| 3 | Search "zzzz-nothing" | "No jobs match. Try a broader search or clear a filter." |
+| 4 | Browser **Back** | URL, results *and* the search box are back to "react" |
+| 5 | Open a shared link `/jobs/?work_mode=remote` | Filter applied, and the dropdown shows "Remote" |
+| 6 | **Match my CV** while signed out | Sent to log in. **Create an account** |
+| 7 | Sign up with password `12345` | Three clear password errors |
+| 8 | Sign up properly | Signed in, on `/match/`, with "Welcome, …" |
+| 9 | Upload `notes.txt` | "Unsupported file type. Upload a PDF or DOCX." |
+| 10 | Upload the CV | 40 s, then 9 ranked matches, the gaps panel, and skills read from the CV |
+| 11 | Tick **Remote only** | Results swap and the URL gets `?remote_only=on` |
+| 12 | Countries "Kenya" → Apply | "Filters not applied — showing all matches. Use two-letter country codes…" |
+| 13 | Open match #1 | Score and facts in **0.1 s**. "Writing a short explanation…" until it arrives at 37 s |
+| 14 | **My profile** | Latest CV, top 5 matches, gaps |
+| 15 | **Log out** → **Log in** with a wrong password, then the right one | "That username and password don't match." Then back to the profile |
+
+No JavaScript errors, no console errors, no HTTP errors and no server tracebacks across the whole walkthrough.
+
+Fixed because of it:
+- **Back button:** after an HTMX search, Back restored the results but left the search box empty. HTMX now keeps no page snapshots (`historyCacheSize: 0`), so Back re-fetches the page and the server fills in the form from the URL.
+- **Bad country codes were silently ignored** when the filter was applied through HTMX, because the form errors lived outside the swapped results. The results partial now says the filters weren't applied and why.
+- **Opening a match hung for ~37 s** while the language model wrote the explanation. The page now renders at once. "Why this match" loads separately (`/cv/<id>/job/<id>/explanation/`) with a "writing…" message, and a fallback message if that request fails.
+- **Empty filters in URLs** (`&work_mode=&source=`) are dropped (`static/js/htmx-setup.js`).
+- The upload page promised "a few seconds". It now says 20–60 seconds, which matches what the local model takes.
+
+Seen but not fixed here (a Week 5 extraction issue, separate from the interface): a CV that groups skills under labels ("Analysis: SQL", "Data: PostgreSQL") has the labels kept in the skill names. Those then don't match the jobs' "SQL" / "PostgreSQL", so every match shows 0 required skills.
+
 ### Tests
 
 ```bash
 pytest apps/analytics/tests/test_dashboard.py apps/intelligence/tests/test_job_list.py \
        apps/accounts/tests/test_auth_and_profile.py apps/core -v
-pytest                                     # all 209
+pytest                                     # all 211
 ```

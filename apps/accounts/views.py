@@ -154,10 +154,7 @@ def matches(request, cv_id):
     return render(request, template, context)
 
 
-@login_required
-def match_detail(request, cv_id, job_id):
-    from apps.intelligence.explain import explain_match_with_source
-
+def _one_match(request, cv_id, job_id):
     cv, profile = _own_profile(request, cv_id)
     _, remote_only, countries = _filters(request)
     if profile is None:
@@ -166,11 +163,13 @@ def match_detail(request, cv_id, job_id):
     found = match_profile(profile, remote_only=remote_only, countries=countries, job_ids=[job_id], limit=1)
     if not found:
         raise Http404('This job is not a match for this CV with the current filters.')
-    result = found[0]
+    return cv, profile, found[0], _filter_query(remote_only, countries)
 
-    # Generated on demand, only for the match the user opened
-    explanation, source = explain_match_with_source(result)
 
+@login_required
+def match_detail(request, cv_id, job_id):
+    """Score and facts render at once; the explanation loads separately (it can take ~30 s)."""
+    cv, profile, result, filter_query = _one_match(request, cv_id, job_id)
     rows = [
         (name, COMPONENT_LABELS[name], result.components[name], result.weights[name], result.contributions[name])
         for name in result.components
@@ -180,9 +179,21 @@ def match_detail(request, cv_id, job_id):
         'profile': profile,
         'r': result,
         'rows': rows,
+        'filter_query': filter_query,
+    })
+
+
+@login_required
+def match_explanation(request, cv_id, job_id):
+    """The 'Why this match' text, fetched by HTMX once the detail page is showing."""
+    from apps.intelligence.explain import explain_match_with_source
+
+    _, _, result, _ = _one_match(request, cv_id, job_id)
+    # Generated on demand, only for the match the user opened (cached after the first time)
+    explanation, source = explain_match_with_source(result)
+    return render(request, 'accounts/_explanation.html', {
         'explanation': explanation,
         'explanation_source': source,
-        'filter_query': _filter_query(remote_only, countries),
     })
 
 

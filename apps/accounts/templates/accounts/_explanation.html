@@ -1,0 +1,5 @@
+<p class="mt-2 text-slate-700">{{ explanation }}</p>
+<p class="muted mt-2">
+  {% if explanation_source == "llm" %}Written by the language model from the facts on this page.
+  {% else %}Generated from the facts on this page (the language model’s answer wasn’t used).{% endif %}
+</p>
