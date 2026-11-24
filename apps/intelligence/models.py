@@ -132,7 +132,10 @@ class Job(TimestampedModel):
 
     def embed_text(self) -> str:
         """Canonical text fed to the embedder (title_skills strategy)."""
-        skills = list(self.skills.values_list('name', flat=True))
+        # .all() reads prefetch_related('skills') when the caller used it;
+        # .values_list() would bypass it and query once per job.
+        # Sorted so the text (and its hash) doesn't depend on row order.
+        skills = sorted(s.name for s in self.skills.all())
         parts = [self.title]
         if self.seniority:
             parts.append(self.seniority)
