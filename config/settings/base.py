@@ -85,9 +85,16 @@ LOGIN_URL = 'login'
 LOGIN_REDIRECT_URL = 'accounts:profile'
 LOGOUT_REDIRECT_URL = 'analytics:dashboard'
 
-# LLM
+# LLM and embeddings — any OpenAI-compatible API. Defaults are local Ollama;
+# production points these at a hosted API (see docs/deployment.md).
 OPENAI_API_KEY = env("OPENAI_API_KEY", default="")
 LLM_BASE_URL = env("LLM_BASE_URL", default="http://localhost:11434/v1")
+LLM_MODEL = env("LLM_MODEL", default="llama3.2")
+EMBED_BASE_URL = env("EMBED_BASE_URL", default=LLM_BASE_URL)
+EMBED_MODEL = env("EMBED_MODEL", default="nomic-embed-text")
+# Job.embedding is vector(768). Models that can shorten their output
+# (OpenAI text-embedding-3-*) must be asked for 768; leave unset for nomic-embed-text.
+EMBED_DIMENSIONS = env.int("EMBED_DIMENSIONS", default=None)
 
 # Celery
 CELERY_BROKER_URL = env('REDIS_URL', default='redis://localhost:6379/0')
