@@ -122,7 +122,7 @@ CELERY_BEAT_SCHEDULE = {
     # Transform and extraction each queue a refresh when they finish; this
     # catches anything else that changes jobs (dedup, admin edits).
     'refresh-aggregates-daily': {
-        'task': 'apps.analytics.tasks.task_refresh_aggregates',
+        'task': 'apps.analytics.tasks.refresh_aggregates',
         'schedule': 86400,
     },
 }

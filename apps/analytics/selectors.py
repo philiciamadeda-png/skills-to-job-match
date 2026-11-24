@@ -11,10 +11,10 @@ from django.db.models import Sum
 
 from apps.analytics.models import (
     HeadlineTotals,
-    SeniorityDailyCount,
-    SkillDailyCount,
-    SourceDailyCount,
-    WorkModeDailyCount,
+    DailySeniorityCount,
+    DailySkillCount,
+    DailySourceCount,
+    DailyWorkModeCount,
 )
 
 
@@ -31,7 +31,7 @@ def headline() -> HeadlineTotals | None:
 def top_skills(days: int | None = None, limit: int = 20) -> list[dict]:
     """[{'skill_id', 'skill': name, 'jobs', 'required'}, …] most requested first."""
     qs = (
-        _since(SkillDailyCount.objects, days)
+        _since(DailySkillCount.objects, days)
         .values('skill_id', 'skill__name')
         .annotate(jobs=Sum('job_count'), required=Sum('required_count'))
         .order_by('-jobs', 'skill__name')[:limit]
@@ -46,7 +46,7 @@ def skill_trend(skill_ids, days: int = 30) -> dict[int, list[tuple[date, int]]]:
     """Daily job counts per skill, oldest day first. Days with no jobs are absent."""
     trend: dict[int, list[tuple[date, int]]] = {pk: [] for pk in skill_ids}
     qs = (
-        _since(SkillDailyCount.objects, days)
+        _since(DailySkillCount.objects, days)
         .filter(skill_id__in=skill_ids)
         .order_by('day')
         .values_list('skill_id', 'day', 'job_count')
@@ -62,17 +62,17 @@ def _breakdown(model, field: str, days: int | None) -> dict[str, int]:
 
 
 def jobs_by_seniority(days: int | None = None) -> dict[str, int]:
-    return _breakdown(SeniorityDailyCount, 'seniority', days)
+    return _breakdown(DailySeniorityCount, 'seniority', days)
 
 
 def jobs_by_work_mode(days: int | None = None) -> dict[str, int]:
-    return _breakdown(WorkModeDailyCount, 'work_mode', days)
+    return _breakdown(DailyWorkModeCount, 'work_mode', days)
 
 
 def new_jobs_per_day(days: int = 30) -> list[tuple[date, str, int]]:
     """(day, source, jobs) rows, oldest day first."""
     return list(
-        _since(SourceDailyCount.objects, days)
+        _since(DailySourceCount.objects, days)
         .order_by('day', 'source')
         .values_list('day', 'source', 'job_count')
     )
