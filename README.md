@@ -32,6 +32,7 @@ Matching then works on top of the structured jobs:
 - Pydantic — LLM output schema validation
 - `django-environ`, `requests`
 - `pytest` + `factory-boy` for tests
+- Production: Docker, gunicorn, WhiteNoise, Render (see [`docs/deployment.md`](docs/deployment.md))
 
 ## Project structure
 
@@ -57,14 +58,16 @@ apps/
                   # selectors (what the dashboard reads), dashboard view
   core/           # TimestampedModel, HTMX helper, `ui` template filters
 templates/        # base.html, partials/ (nav, messages, form field), registration/ (login, sign-up)
+assets/
+  tailwind.css    # Tailwind source: the three colours and shared components (outside static/ on purpose)
 static/
-  src/app.css     # Tailwind source: the three colours and shared components
   css/app.css     # Built CSS (committed)
   js/dashboard.js # Chart.js setup for the four dashboard charts
   vendor/         # HTMX 2.0.11, Chart.js 4.6.2 — served locally, no CDN
 docs/
   matching-design.md       # Design note for the matching feature
   matching-evaluation.md   # Hand-judged results, fixes, remaining failures
+  deployment.md            # Production on Render + first-deploy error checklist
   model-card-seniority.md
   prompt-iteration.md
 config/
@@ -75,7 +78,9 @@ config/
     production.py
 conftest.py
 pytest.ini
-docker-compose.yml
+docker-compose.yml        # local Postgres + Redis
+Dockerfile                # production image: web, worker and beat all run from it
+render.yaml               # Render Blueprint: database, Key Value, web, worker, beat
 ```
 
 ## Prerequisites
@@ -123,6 +128,8 @@ Open `.env` and set your values:
 | `REDIS_URL`         | e.g. `redis://localhost:6379/0` (this is the default if unset)    |
 | `OPENAI_API_KEY`    | Optional — leave unset to use local Ollama instead                |
 | `LLM_BASE_URL`      | LLM endpoint, default `http://localhost:11434/v1` (Ollama)        |
+| `LLM_MODEL`         | Default `llama3.2`                                                 |
+| `EMBED_BASE_URL`, `EMBED_MODEL`, `EMBED_DIMENSIONS` | Embeddings endpoint; defaults to Ollama `nomic-embed-text`. Production uses OpenAI `text-embedding-3-small` with `768` |
 
 ### 4. Start PostgreSQL and Redis
 
@@ -1172,7 +1179,7 @@ The dashboard reads only the aggregation tables. `test_dashboard_never_reads_raw
 - **HTMX** (`apps/core/htmx.py`): a view returns the partial when the request has `HX-Request: true`, and the full page otherwise. That includes HTMX's history-restore requests, so every URL works without JavaScript. Responses send `Vary: HX-Request` so a browser cache never mixes up the two.
   - **Job list:** typing in the search box (debounced 300 ms) or changing a filter swaps just the results and pushes the URL, so a filtered list can be bookmarked or shared. Paging does the same.
   - **Matches page:** the remote/countries filters swap the results the same way.
-- **Three colours**, enforced by the build. `static/src/app.css` switches Tailwind's default palette off (`--color-*: initial`) and defines only:
+- **Three colours**, enforced by the build. `assets/tailwind.css` switches Tailwind's default palette off (`--color-*: initial`) and defines only:
   - **primary** (indigo): actions, links, chart bars, matched skills
   - **slate**: text, borders, backgrounds, "not stated" bars
   - **accent** (amber): only for gaps — missing skills, roles above your level, errors
@@ -1185,8 +1192,8 @@ The dashboard reads only the aggregation tables. `test_dashboard_never_reads_raw
 Tailwind v4 standalone CLI, through the `pytailwindcss` pip package (no Node needed). The built file is committed, so you only need this after changing classes in a template:
 
 ```bash
-tailwindcss -i static/src/app.css -o static/css/app.css --minify            # once
-tailwindcss -i static/src/app.css -o static/css/app.css --watch             # while editing
+tailwindcss -i assets/tailwind.css -o static/css/app.css --minify            # once
+tailwindcss -i assets/tailwind.css -o static/css/app.css --watch             # while editing
 ```
 
 ### Query counts
@@ -1250,4 +1257,32 @@ Seen but not fixed here (a Week 5 extraction issue, separate from the interface)
 pytest apps/analytics/tests/test_dashboard.py apps/intelligence/tests/test_job_list.py \
        apps/accounts/tests/test_auth_and_profile.py apps/core -v
 pytest                                     # all 211
+```
+
+## Week 6 — Deployment (Task 3)
+
+The prompt is in [`week6_task3_prompt.md`](week6_task3_prompt.md). The full answer is **[`docs/deployment.md`](docs/deployment.md)**: production settings, static files, the Dockerfile, migrations, worker and beat, step-by-step first deploy, and a 30-item first-deploy error checklist.
+
+**Host: Render.** A `render.yaml` Blueprint defines all five resources: Postgres with pgvector, a Key Value store (Redis-compatible), the gunicorn web service, the Celery worker and Celery beat. All three app processes run from one `Dockerfile`. Migrations run in `preDeployCommand`, so a failed migration stops the deploy while the old version keeps serving. About $27/month.
+
+**AI in production:** OpenAI (`gpt-4o-mini`, `text-embedding-3-small` at 768 dimensions). The model and endpoint are now settings (`LLM_MODEL`, `EMBED_*`). Locally nothing changes: embeddings go through Ollama's OpenAI-style `/v1/embeddings`, which was checked to return identical vectors to the old `/api/embed`.
+
+**New files:** `Dockerfile`, `.dockerignore`, `render.yaml`, `config/settings/production.py` (rewritten), `apps/core/middleware.py` (`/healthz/`). The Tailwind source moved to `assets/tailwind.css`.
+
+**Verified** by building the production image locally and running web + worker + beat against an empty Postgres:
+- migrations and pgvector applied, and a second run changed nothing
+- `check --deploy` clean
+- HTTPS redirect, HSTS, hashed + gzipped static files, CSRF origin check, a plain 404 page
+- the full pipeline ingested 15 real jobs through to the dashboard
+- memory 100–180 MB per process, graceful shutdown in 1 s
+
+Building the image also caught four real first-deploy errors, now fixed and listed in the checklist:
+- the Tailwind source inside `static/`
+- a Chart.js source-map reference
+- `sh -c` without `exec` swallowing `SIGTERM`
+- a `SECRET_KEY` rule that would have rejected Render's generated key
+
+```bash
+docker build -t skills-to-job-match .                              # or: podman build
+pytest apps/core/tests/test_deploy.py -v                            # production settings + health check
 ```
