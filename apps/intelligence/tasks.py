@@ -148,7 +148,7 @@ def task_extract_jobs(self, batch_size: int = 50, limit: int | None = None, dry_
 
                 last_id = batch[-1].pk
 
-            return {
+            result = {
                 'processed': run.processed,
                 'succeeded': run.succeeded,
                 'failed': run.failed,
@@ -158,6 +158,12 @@ def task_extract_jobs(self, batch_size: int = 50, limit: int | None = None, dry_
             }
     finally:
         cache.delete(LOCK_KEY)
+
+    # Extraction writes the skills, seniority and remote status the dashboard counts
+    if result['succeeded']:
+        from apps.analytics.tasks import queue_refresh
+        queue_refresh()
+    return result
 
 
 @shared_task

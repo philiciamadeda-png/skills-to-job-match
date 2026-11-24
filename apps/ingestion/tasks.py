@@ -72,8 +72,12 @@ def task_transform_jobs(self, batch_size: int = 200):
     try:
         with ingestion_run('transform', 'all') as run:
             result = transform_raw_payloads(run=run, batch_size=batch_size)
-            return result
     except Exception as exc:
         raise self.retry(exc=exc)
     finally:
         _release_lock(lock_key)
+
+    # Outside the try: a failure to queue must not retry the transform
+    from apps.analytics.tasks import queue_refresh
+    queue_refresh()
+    return result

@@ -119,6 +119,12 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'apps.intelligence.tasks.task_embed_jobs',
         'schedule': 7200 + 5400,  # after extraction
     },
+    # Transform and extraction each queue a refresh when they finish; this
+    # catches anything else that changes jobs (dedup, admin edits).
+    'refresh-aggregates-daily': {
+        'task': 'apps.analytics.tasks.task_refresh_aggregates',
+        'schedule': 86400,
+    },
 }
 
 # Cache — Redis, used for distributed locks
