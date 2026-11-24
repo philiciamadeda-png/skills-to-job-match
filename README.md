@@ -53,7 +53,8 @@ apps/
       results/                          # Timestamped JSON result files per prompt version
   accounts/       # CV and CVProfile models, CV text extraction, profile service,
                   # upload → matches → match pages (views, forms, templates)
-  analytics/      # Placeholder
+  analytics/      # Dashboard aggregation tables, refresh service + Celery task,
+                  # selectors (what the dashboard reads)
 docs/
   matching-design.md       # Design note for the matching feature
   matching-evaluation.md   # Hand-judged results, fixes, remaining failures
@@ -198,6 +199,8 @@ python manage.py runserver
 ```
 
 Beat dispatches `task_ingest_jobs` every 2 hours, `task_transform_jobs` 30 minutes later, `task_extract_jobs` after that and `task_embed_jobs` last, with run records appearing at `/admin/ingestion/ingestionrun/`, `/admin/intelligence/extractionrun/` and `/admin/intelligence/embeddingrun/`. Extraction only takes pending jobs and embedding only takes jobs whose text or model changed, and each holds a Redis lock, so a stage that starts before the previous one has finished just picks up the rest on its next run.
+
+When transform finishes, and when an extraction run extracts at least one job, a `task_refresh_aggregates` is queued to rebuild the dashboard tables. Beat also runs it once a day as a safety net. See "Week 6 — Aggregations and query performance".
 
 ## Maintaining the skill vocabulary
 
@@ -1004,3 +1007,80 @@ Same page, 110 eligible real jobs (Remotive + Arbeitnow) and Redis running:
 | Corrupt DOCX / PDF | "Text extraction failed. The file may be corrupt." No crash, no CV profile |
 
 Known limits seen in the live run: years of experience is approximate (a CV running 2014–present came back as 7–8 years); and for an all-skills-matched job llama3.2 often fails the checks, so the template explanation is shown — accurate, but plainer.
+
+## Week 6 — Aggregations and query performance (Task 1)
+
+### Why pre-aggregate
+
+Counting the most requested skills across every job on every page load scans all of `Job` and `JobSkill` each visit. That's fine at 3,000 rows and unusable at 300,000. The dashboard reads only from small tables in `apps/analytics` that are rebuilt in the background. Each page load costs one query per chart, however many jobs there are.
+
+### The tables (`apps/analytics/models.py`)
+
+| Model | One row per | Feeds |
+|---|---|---|
+| `SkillDailyCount` | day × skill (`job_count`, `required_count`) | Top skills, daily skill trend |
+| `SeniorityDailyCount` | day × level (`junior` … `director`, `unknown`) | Jobs by seniority |
+| `WorkModeDailyCount` | day × `remote` / `hybrid` / `on_site` / `unknown` | Remote vs on-site |
+| `SourceDailyCount` | day × source | New jobs per day, per source |
+| `HeadlineTotals` | a single row (pk=1) | Jobs tracked, companies, distinct skills, `refreshed_at` |
+
+Definitions:
+- **Day**: the day the job was posted (`published_date`), or the day we first saw it if the source gave no date.
+- **Duplicates** (`canonical` set): left out everywhere, so a job on two boards counts once.
+- **Work mode**: the LLM's reading of the description (`extracted_remote_status`) comes first. If that's missing, a "Remote" location counts as remote. Anything else is `unknown`.
+- **Seniority**: blank and `not_stated` both count as `unknown`.
+
+### Refresh (`apps/analytics/services.py`, `apps/analytics/tasks.py`)
+
+`refresh_aggregates()` recomputes every table from `Job` / `JobSkill` with one `GROUP BY` per table. Then, **inside one transaction**, it deletes the old rows and bulk-inserts the new ones. Why running it twice can't double-count:
+
+- **Replace, never increment.** Every run computes the totals from scratch, so a second run writes the same rows again. It never adds to the first run's numbers. Late changes are picked up too: extraction filling in skills on older jobs, a job marked as a duplicate, a deleted job.
+- **Unique constraints** on `(day, skill)`, `(day, seniority)`, `(day, work_mode)` and `(day, source)`. If two refreshes ever raced, the second would fail loudly instead of inserting a second copy.
+- **A Redis lock** in `task_refresh_aggregates` stops two refreshes overlapping in the first place.
+- **Atomic swap.** Postgres readers see the old rows until the commit, so the dashboard is never empty or half-built. A refresh that fails rolls back and the previous numbers stay.
+
+When it runs:
+- after every `task_transform_jobs` run
+- after every `task_extract_jobs` run that extracted at least one job, because extraction is what writes skills, seniority and remote status
+- once a day from Beat (`refresh-aggregates-daily`), to catch anything else
+
+Queueing happens outside the transform's retry block. If the broker hiccups, the error is logged and the transform is not retried for it.
+
+```bash
+python manage.py refresh_aggregates      # manual / first-time backfill
+```
+
+On the local 12-job database a refresh takes 0.08 s, and two runs in a row produce identical rows.
+
+A full rebuild is the simple, correct choice at this size. At hundreds of thousands of jobs, the next step would be to rebuild only the days whose jobs changed.
+
+### Reading (`apps/analytics/selectors.py`)
+
+`headline()`, `top_skills(days, limit)`, `skill_trend(skill_ids, days)`, `jobs_by_seniority(days)`, `jobs_by_work_mode(days)` and `new_jobs_per_day(days)` each make one query against the aggregation tables. `test_selectors_never_query_jobs` checks that none of them touches `intelligence_job` or `intelligence_jobskill`.
+
+### Finding N+1 queries
+
+`django-debug-toolbar` is enabled in `config/settings/local.py` (dev only, never under pytest). Run `python manage.py runserver`, open a page from `127.0.0.1`, and the **SQL** panel shows the query count and any duplicated queries. If a list page runs more than about 10 queries, or a query repeats once per row, you have an N+1.
+
+The toolbar shows the problem on one page load. The tests in `apps/core/tests/test_query_counts.py` stop it coming back: each one runs a page or task with 3 jobs and then with 30, and fails if the query count changes.
+
+| Page / task | Queries (3 jobs → 30 jobs) | Result |
+|---|---|---|
+| `/cv/<id>/` matches | 8 → 8 | Already fixed in Week 5: `candidate_jobs()` uses `select_related('company', 'location')` and `prefetch_related(Prefetch('jobskill_set', JobSkill…select_related('skill')))` |
+| Admin job list | 7 → 7 | Django's admin follows the foreign keys shown in `list_display` |
+| Admin job-skill list | 6 → 6 | Same |
+| `task_embed_jobs` | **10 → 37**, now 7 → 7 | **Fixed.** `Job.embed_text()` used `self.skills.values_list('name')`, and `.values_list()` ignores `prefetch_related`, so it ran one query per job even though the task prefetched skills. It now reads `self.skills.all()`, which uses the prefetch cache. The skill names are also sorted now, so the text and its hash don't depend on database row order. Expect a one-off re-embed the first time this runs. |
+
+### `select_related` vs `prefetch_related`
+
+- **`select_related` is for foreign keys and one-to-one fields**, the single object on the "one" side, like `job.company` or `job.location`. It adds a SQL **JOIN**, so the job and its company come back in the same row of **one query**. A join works because each job has at most one company: the result never gets more rows than there are jobs.
+- **`prefetch_related` is for many-to-many fields and reverse foreign keys**, the "many" side, like `job.skills` or `job.jobskill_set`. Joining would repeat each job once per skill (30 jobs × 8 skills = 240 rows of duplicated job data). So instead it runs **one extra query** for every related row, `WHERE job_id IN (…)`, and matches them up in Python. That's 2 queries in total, however many jobs there are.
+- **They combine.** `Prefetch('jobskill_set', queryset=JobSkill.objects.select_related('skill'))` prefetches the through-table rows and joins each one to its skill.
+- **The trap** (the one we hit above): a prefetch only fills `.all()`. Calling `.values_list()`, `.filter()`, `.count()` or `.order_by()` on the related manager starts a fresh query and ignores the prefetched rows.
+
+### Tests
+
+```bash
+pytest apps/analytics apps/core -v     # 21 tests
+pytest                                 # all 171
+```
