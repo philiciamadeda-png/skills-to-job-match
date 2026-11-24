@@ -1,6 +1,9 @@
 /*
  * Tailwind source. Build with:
- *   tailwindcss -i static/src/app.css -o static/css/app.css --minify
+ *   tailwindcss -i assets/tailwind.css -o static/css/app.css --minify
+ *
+ * Kept outside static/ on purpose: collectstatic would ship this source, and
+ * the production storage fails on its @import "tailwindcss".
  *
  * Three colours only. The default palette is switched off below, so any other
  * colour class simply doesn't exist:
@@ -12,8 +15,8 @@
  */
 @import "tailwindcss";
 
-@source "../../templates";
-@source "../../apps";
+@source "../templates";
+@source "../apps";
 
 @theme static {
   --color-*: initial;

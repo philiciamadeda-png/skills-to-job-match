@@ -1,0 +1,24 @@
+# Secrets and personal data never go into the image
+.env
+.env.*
+eval_cvs/
+
+# Local environments, caches, build output
+.git/
+.venv/
+venv/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/
+staticfiles/
+media/
+celerybeat-schedule
+celerybeat.pid
+db.sqlite3
+
+# Editor / notebooks (not needed to run the app)
+.idea/
+notebooks/
+ml/notebooks/
