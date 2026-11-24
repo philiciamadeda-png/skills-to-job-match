@@ -1,14 +1,15 @@
 """
-Production configuration: settings pass Django's deploy checks and the health
-check works behind a proxy.
+Production configuration: settings pass Django's deploy checks, the health
+check works behind a proxy, and the AI endpoints come from settings.
 """
 import os
 import subprocess
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
+from django.test import override_settings
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -94,3 +95,44 @@ def test_health_check_fails_when_database_is_down(client):
         conn.cursor.side_effect = RuntimeError('connection refused')
         resp = client.get('/healthz/')
     assert resp.status_code == 503
+
+
+# ── AI endpoints come from settings ───────────────────────────────────────
+
+def _fake_embeddings_response(n):
+    resp = MagicMock()
+    # Returned out of order on purpose: results must be put back in input order
+    resp.json.return_value = {'data': [{'index': i, 'embedding': [float(i)] * 3} for i in reversed(range(n))]}
+    return resp
+
+
+@override_settings(EMBED_BASE_URL='https://api.openai.com/v1/', EMBED_DIMENSIONS=768, OPENAI_API_KEY='sk-test')
+def test_embed_batch_uses_settings_and_keeps_order():
+    from apps.intelligence import tasks
+    with patch.object(tasks, 'requests') as req:
+        req.post.return_value = _fake_embeddings_response(3)
+        vectors = tasks._embed_batch(['a', 'b', 'c'])
+
+    url = req.post.call_args.args[0]
+    kwargs = req.post.call_args.kwargs
+    assert url == 'https://api.openai.com/v1/embeddings'
+    assert kwargs['json'] == {'model': tasks.EMBED_MODEL, 'input': ['a', 'b', 'c'], 'dimensions': 768}
+    assert kwargs['headers'] == {'Authorization': 'Bearer sk-test'}
+    assert vectors == [[0.0] * 3, [1.0] * 3, [2.0] * 3]
+
+
+@override_settings(EMBED_BASE_URL='http://localhost:11434/v1', EMBED_DIMENSIONS=None, OPENAI_API_KEY='')
+def test_embed_batch_local_ollama_sends_no_dimensions():
+    from apps.intelligence import tasks
+    with patch.object(tasks, 'requests') as req:
+        req.post.return_value = _fake_embeddings_response(1)
+        tasks._embed_batch(['a'])
+    assert 'dimensions' not in req.post.call_args.kwargs['json']
+    assert req.post.call_args.args[0] == 'http://localhost:11434/v1/embeddings'
+
+
+@override_settings(LLM_MODEL='gpt-4o-mini')
+def test_llm_model_comes_from_settings():
+    from apps.intelligence.llm.client import LLMClient
+    assert LLMClient().model == 'gpt-4o-mini'
+    assert LLMClient(model='llama3.2').model == 'llama3.2'

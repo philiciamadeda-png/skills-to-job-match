@@ -1,6 +1,6 @@
 # Deploying to Render
 
-How Skills to Job Match runs in production: the web app, a Celery worker, Celery beat, Postgres with pgvector and Redis. The language models are not part of this deployment; see [§8](#8-the-language-model-in-production) for what that means.
+How Skills to Job Match runs in production: the web app, a Celery worker, Celery beat, Postgres with pgvector, Redis, and a hosted language model.
 
 Everything in this note was run for real before it was written down. The production Docker image was built locally and started as web + worker + beat against an **empty** Postgres database. Migrations, static files, HTTPS handling, CSRF, the health check, graceful shutdown and the full pipeline (ingest → transform → extract → embed → dashboard) all worked; see [What was verified](#what-was-verified). The Render-specific parts (the Blueprint file) were validated against Render's published schema. They run for real on your first deploy.
 
@@ -49,8 +49,8 @@ Everything in this note was run for real before it was written down. The product
                          └──────────────────────────────────────────────────┘
                                 │                 │
                          skills-db (Postgres 16 + pgvector)   skills-redis (Key Value: broker, locks, cache)
-
-          (no language model: the app looks for Ollama on localhost:11434, which isn't on Render — §8)
+                                                  │
+                                     OpenAI API (gpt-4o-mini, text-embedding-3-small)
 ```
 
 Files:
@@ -80,7 +80,7 @@ Files:
 | Static files | `runserver` serves them | WhiteNoise + `CompressedManifestStaticFilesStorage` | **Unstyled pages**, every `/static/` URL 404s |
 | `LOGGING` | Django defaults | everything to stdout; 500s with tracebacks | "Server Error (500)" with **nothing in the logs** |
 | Celery | defaults | results expire after 1 h; worker children recycled at 300 MB | 25 MB Redis fills with results; worker OOM-killed on a 512 MB box |
-| AI endpoints | Ollama at `localhost:11434` | unchanged, so not available (§8) | — |
+| AI endpoints | Ollama at `localhost:11434` | OpenAI via `LLM_*` / `EMBED_*` variables | Every extraction and explanation fails: `Connection refused` |
 | Debug toolbar | on | not installed (it's only added in `local.py`) | — |
 
 `python manage.py check --deploy` passes with no warnings. Three are silenced on purpose, each with a comment in `production.py`:
@@ -182,38 +182,30 @@ Two things to keep in mind:
 
 ## 8. The language model in production
 
-**Not included.** The app's language models are what they are locally: Ollama at `http://localhost:11434`, with `llama3.2` for extraction and explanations and `nomic-embed-text` for embeddings. That address and those model names are written into the code. Render can't run Ollama, so in production nothing answers at that address.
+Locally the app uses Ollama (`llama3.2`, `nomic-embed-text`), which doesn't exist on Render. The endpoints are now settings, so production points at OpenAI without code changes:
 
-**What works in production:**
-- the dashboard and its charts
-- the job list, with search and filters
-- sign-up, log in and the profile page
-- fetching jobs from Remotive and Arbeitnow on schedule, the transform step, and the dashboard refresh
+| Variable | Local default | Production (`render.yaml`) |
+|---|---|---|
+| `LLM_BASE_URL` | `http://localhost:11434/v1` | `https://api.openai.com/v1` |
+| `LLM_MODEL` | `llama3.2` | `gpt-4o-mini` |
+| `EMBED_BASE_URL` | same as `LLM_BASE_URL` | same |
+| `EMBED_MODEL` | `nomic-embed-text` | `text-embedding-3-small` |
+| `EMBED_DIMENSIONS` | unset | `768` (matches the `vector(768)` column) |
+| `OPENAI_API_KEY` | unset (`ollama`) | you enter it when creating the Blueprint |
 
-**What doesn't** (each fails safely, without crashing or losing data):
-
-| Feature | What a visitor or the log shows |
-|---|---|
-| Upload a CV | "We read your CV but couldn't analyse it just now. Please try again in a minute." |
-| Read skills / seniority from new jobs | Worker log: `Server error, retrying…`, then the extraction run fails. Jobs **stay pending** and aren't marked failed |
-| Embeddings for matching | Worker log: `batch embed failed — … Connection refused`. Jobs stay un-embedded |
-| "Why this match" explanation | The template explanation built from the facts. Only reachable with an existing CV anyway |
-
-So in production the dashboard shows jobs, companies, sources and remote numbers. The skill charts stay empty because no job gets its skills extracted.
-
-**To add a language model later**, two things are needed:
-1. **Make the endpoints settings instead of fixed values:**
-   - the base URL and model in `apps/intelligence/llm/client.py` (it already reads `LLM_BASE_URL` and `OPENAI_API_KEY` from settings, but the model is fixed at `llama3.2`)
-   - the embeddings URL and model in `apps/intelligence/tasks.py` (fixed at `localhost:11434/api/embed` and `nomic-embed-text`)
-2. **Point them at a service that's reachable from Render:** a hosted API such as OpenAI, or a server running Ollama. Embeddings must stay 768-dimensional (`vector(768)`), or come from a model that can be asked for 768.
+- **Same code path both ways:** embeddings now use the OpenAI-style `/embeddings` endpoint. Ollama supports it too, and it was checked to return **identical** vectors to the old `/api/embed` call (cosine 1.0, max difference 0.0), so nothing changes locally.
+- **No mixing models:** production embeds every job and CV with the same model, starting from an empty database, so the two models are never compared with each other.
+- **Cost:** a few cents a day at this scale.
+- **What carries over from Ollama:** the explanation cache is keyed by model name, and the explanation output checks still apply.
 
 ## 9. First deploy, step by step
 
 1. **Merge** this branch into `main` and push.
-2. **Render dashboard** → **New** → **Blueprint** → connect GitHub → pick `skills-to-job-match`. Render reads `render.yaml` and lists 5 resources. No secrets to enter: `SECRET_KEY` is generated. → **Apply**.
-3. **Watch** the database and Key Value come up, then the three services build. The web service log should show the pre-deploy step applying migrations (`Applying intelligence.0008_pgvector_job_embedding... OK`) and `Done — skills created: 29`.
-4. **Check health**: `https://skills-web.onrender.com/healthz/` → `ok`. Then open `/`. It shows "No numbers yet" (the database is empty), styled.
-5. **Load jobs** without waiting two hours for beat. Open **skills-web → Shell**:
+2. **Render dashboard** → **New** → **Blueprint** → connect GitHub → pick `skills-to-job-match`. Render reads `render.yaml` and lists 5 resources.
+3. **Enter `OPENAI_API_KEY`** when asked (the only secret Render can't generate). → **Apply**.
+4. **Watch** the database and Key Value come up, then the three services build. The web service log should show the pre-deploy step applying migrations (`Applying intelligence.0008_pgvector_job_embedding... OK`) and `Done — skills created: 29`.
+5. **Check health**: `https://skills-web.onrender.com/healthz/` → `ok`. Then open `/`. It shows "No numbers yet" (the database is empty), styled.
+6. **Load jobs** without waiting two hours for beat. Open **skills-web → Shell**:
 
    ```bash
    python manage.py shell -c "
@@ -223,9 +215,9 @@ So in production the dashboard shows jobs, companies, sources and remote numbers
    python manage.py shell -c "from apps.ingestion.tasks import task_transform_jobs; task_transform_jobs.delay()"
    ```
 
-   Transform queues the dashboard refresh itself. Watch progress in **skills-worker → Logs**. Extraction and embedding will log connection errors (§8).
-6. **Optional:** `python manage.py createsuperuser` in the Shell for `/admin/`.
-7. **Sign up** on the site. Browsing works; CV upload needs a language model (§8).
+   Transform queues the dashboard refresh itself. Extraction and embedding follow on beat's schedule, or queue `task_extract_jobs` / `task_embed_jobs` the same way. Watch progress in **skills-worker → Logs**.
+7. **Optional:** `python manage.py createsuperuser` in the Shell for `/admin/`.
+8. **Sign up** on the site and upload a CV.
 
 **From then on:** every push to `main` builds, migrates and deploys all three services.
 
@@ -247,7 +239,7 @@ The production image, built and run locally with podman against a **new, empty**
 | Unknown Host | ✓ 400 |
 | Sign-up POST from another origin / from the site | ✓ 403 / 302 → `/match/`; CSRF cookie marked `Secure` |
 | Worker + beat | ✓ worker `ready`, picked up a queued refresh, succeeded in 0.07 s; beat `Starting...` |
-| Full pipeline in the containers | ✓ ingested 15 Remotive jobs → transformed 15 → extracted 3 → embedded 3 → dashboard: 15 jobs, 11 companies. Extraction and embedding worked only because the test containers shared the laptop's network and reached its Ollama. On Render those two steps won't run (§8) |
+| Full pipeline in the containers | ✓ ingested 15 Remotive jobs → transformed 15 → extracted 3 → embedded 3 → dashboard: 15 jobs, 11 companies |
 | Memory | web 102 MB, worker 180 MB, beat 96 MB (each service has 512 MB) |
 | Graceful shutdown | ✓ gunicorn is PID 1, `Handling signal: term`, stopped in 1 s |
 | `render.yaml` | ✓ 0 errors against `render.com/schema/render.yaml.json` (and the schema does catch deliberate mistakes) |
@@ -376,15 +368,23 @@ Each entry gives **what you see**, **why**, and **the fix**. ⚑ marks the ones 
 
 ### This project specifically
 
-**26. Worker log: `Server error, retrying…` / `batch embed failed — … Connection refused` (`localhost:11434`)**
-- *Why:* expected in this deployment. The language models are Ollama on `localhost:11434`, and there's no Ollama on Render (§8).
-- *Fix:* none needed for the rest of the site, which keeps working. To get AI features, see "To add a language model later" in §8.
+**26. Extraction and explanations fail: `httpx.ConnectError: Connection refused` (Ollama at `localhost:11434`)**
+- *Why:* the AI endpoints still point at Ollama.
+- *Fix:* set `LLM_BASE_URL`, `LLM_MODEL`, `EMBED_MODEL`, `EMBED_DIMENSIONS` and `OPENAI_API_KEY` (done in `render.yaml`, apart from the key).
 
-**27. `InconsistentVersionWarning: Trying to unpickle estimator … from version X when using version Y`**
+**27. `openai.AuthenticationError: Error code: 401 - Incorrect API key provided`**
+- *Why:* the key is missing, mistyped, or has no credit.
+- *Fix:* re-enter `OPENAI_API_KEY` in the `skills-shared` environment group. It's shared, so all three services pick it up after a redeploy.
+
+**28. Embedding fails: `expected 768 dimensions, not 1536`**
+- *Why:* `text-embedding-3-small` returns 1536 dimensions unless asked for fewer, and the column is `vector(768)`.
+- *Fix:* `EMBED_DIMENSIONS=768` (done).
+
+**29. `InconsistentVersionWarning: Trying to unpickle estimator … from version X when using version Y`**
 - *Why:* the seniority model in `ml/artifacts/` was saved with a different scikit-learn than the image installs.
 - *Fix:* keep `scikit-learn` pinned in `requirements.txt` (it is), or retrain and save with the deployed version.
 
-**28. Free tiers that bite later**
+**30. Free tiers that bite later**
 - **Free Render Postgres expires after 30 days**, which is why the Blueprint uses the $6 plan.
 - **Free Key Value keeps everything in memory only:** a restart loses queued tasks and the explanation cache, which is acceptable here.
 - **A free web service sleeps after inactivity:** the first visit then takes about a minute.

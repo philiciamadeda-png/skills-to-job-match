@@ -128,6 +128,8 @@ Open `.env` and set your values:
 | `REDIS_URL`         | e.g. `redis://localhost:6379/0` (this is the default if unset)    |
 | `OPENAI_API_KEY`    | Optional — leave unset to use local Ollama instead                |
 | `LLM_BASE_URL`      | LLM endpoint, default `http://localhost:11434/v1` (Ollama)        |
+| `LLM_MODEL`         | Default `llama3.2`                                                 |
+| `EMBED_BASE_URL`, `EMBED_MODEL`, `EMBED_DIMENSIONS` | Embeddings endpoint; defaults to Ollama `nomic-embed-text`. Production uses OpenAI `text-embedding-3-small` with `768` |
 
 ### 4. Start PostgreSQL and Redis
 
@@ -1259,11 +1261,11 @@ pytest                                     # all 211
 
 ## Week 6 — Deployment (Task 3)
 
-The prompt is in [`week6_task3_prompt.md`](week6_task3_prompt.md). The full answer is **[`docs/deployment.md`](docs/deployment.md)**: production settings, static files, the Dockerfile, migrations, worker and beat, step-by-step first deploy, and a 28-item first-deploy error checklist.
+The prompt is in [`week6_task3_prompt.md`](week6_task3_prompt.md). The full answer is **[`docs/deployment.md`](docs/deployment.md)**: production settings, static files, the Dockerfile, migrations, worker and beat, step-by-step first deploy, and a 30-item first-deploy error checklist.
 
 **Host: Render.** A `render.yaml` Blueprint defines all five resources: Postgres with pgvector, a Key Value store (Redis-compatible), the gunicorn web service, the Celery worker and Celery beat. All three app processes run from one `Dockerfile`. Migrations run in `preDeployCommand`, so a failed migration stops the deploy while the old version keeps serving. About $27/month.
 
-**AI in production: not included.** The language models stay as they are locally (Ollama on `localhost:11434`, fixed in the code), which Render can't reach. The deployed site serves the dashboard, the job list, sign-up and the job pipeline. CV upload, skill extraction and embeddings fail safely with clear messages, and jobs stay pending. `docs/deployment.md` §8 explains what works and what adding a model later would take.
+**AI in production:** OpenAI (`gpt-4o-mini`, `text-embedding-3-small` at 768 dimensions). The model and endpoint are now settings (`LLM_MODEL`, `EMBED_*`). Locally nothing changes: embeddings go through Ollama's OpenAI-style `/v1/embeddings`, which was checked to return identical vectors to the old `/api/embed`.
 
 **New files:** `Dockerfile`, `.dockerignore`, `render.yaml`, `config/settings/production.py` (rewritten), `apps/core/middleware.py` (`/healthz/`). The Tailwind source moved to `assets/tailwind.css`.
 

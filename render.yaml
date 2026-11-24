@@ -6,7 +6,6 @@
 #   skills-worker  celery worker       — ingest, transform, extraction, embedding, aggregates
 #   skills-beat    celery beat         — the scheduler; exactly one instance, ever
 # Plus Postgres (with pgvector) and a Redis-compatible Key Value store.
-# Language models are not part of this deployment (docs/deployment.md §8).
 #
 # Cost (Hobby workspace): web, worker and beat $7 each + Postgres $6; Key Value free ≈ $27/month.
 
@@ -79,5 +78,13 @@ envVarGroups:
     envVars:
       - key: SECRET_KEY
         generateValue: true             # same random value for all three services
-      # No AI settings: the app's language models are Ollama on localhost:11434,
-      # which doesn't exist on Render. See docs/deployment.md §8.
+      - key: OPENAI_API_KEY
+        sync: false                     # Render asks for it when you create the Blueprint
+      - key: LLM_BASE_URL
+        value: https://api.openai.com/v1
+      - key: LLM_MODEL
+        value: gpt-4o-mini
+      - key: EMBED_MODEL
+        value: text-embedding-3-small
+      - key: EMBED_DIMENSIONS             # Job.embedding is vector(768)
+        value: "768"
